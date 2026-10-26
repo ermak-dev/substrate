@@ -16,6 +16,7 @@ package controlapi
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -452,29 +453,64 @@ func TestRevertActor_MissingTemplate(t *testing.T) {
 // nothing to return it to. That is accepted, not an error — the actor resumes
 // from its template as a fresh one.
 func TestRevertActor_NoSnapshotToRevertTo(t *testing.T) {
-	ctx := context.Background()
-	st, cleanup := storetest.SetupTestStore(t)
-	defer cleanup()
-	w := newTestActorWorkflow(t, st, "ns", "tmpl1")
-
-	actorRef := resources.ActorRef{Atespace: "team-a", Name: "id1"}
-	seedWorkflowActor(t, ctx, st, actorRef, "ns", "tmpl1", ateapi.ActorState_ACTOR_STATE_CRASHED, func(a *ateapi.Actor) {
-		a.Status.Crash = newActorCrash("resume", crashMessageWorkerGone)
-	})
-
-	reverted, err := w.RevertActor(ctx, actorRef)
-	if err != nil {
-		t.Fatalf("RevertActor: %v", err)
-	}
-	if got := reverted.GetStatus().GetState(); got != ateapi.ActorState_ACTOR_STATE_SUSPENDED {
-		t.Errorf("state = %v, want SUSPENDED", got)
-	}
-	if got := reverted.GetStatus().GetCrash(); got != nil {
-		t.Errorf("Crash = %v, want cleared by the revert", got)
-	}
-	gotSnap := findLatestDurableSnapshot(reverted.GetStatus(), ateapi.SnapshotStorageStatus_SNAPSHOT_STORAGE_STATUS_COMPLETED)
-	if got := gotSnap.GetDurableSnapshot().GetObject().GetSnapshotUri(); got != "" {
-		t.Errorf("external snapshot = %q, want none", got)
+	for _, tc := range []struct {
+		name    string
+		state   ateapi.ActorState
+		running bool
+	}{
+		{"crashed", ateapi.ActorState_ACTOR_STATE_CRASHED, false},
+		{"running LXC", ateapi.ActorState_ACTOR_STATE_RUNNING, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st, cleanup := storetest.SetupTestStore(t)
+			defer cleanup()
+			w := newTestActorWorkflow(t, st, "ns", "tmpl1")
+			atelet := &capturingAtelet{}
+			w.dialer = newNodeAteletDialer(t, atelet)
+			var terminations atomic.Int32
+			atelet.onTerminate = func() { terminations.Add(1) }
+			actorRef := resources.ActorRef{Atespace: "team-a", Name: "id1"}
+			seedWorkflowActor(t, ctx, st, actorRef, "ns", "tmpl1", tc.state, func(a *ateapi.Actor) {
+				if tc.running {
+					a.Status.WorkerAssignment = wireTestAssignment()
+					a.Status.WorkerAssignment.SandboxRuntime = &ateapi.ActorSandboxRuntime{SandboxClass: "lxc"}
+					a.Status.AssignedNode = wireTestAssignment().GetNodeName()
+				} else {
+					a.Status.Crash = newActorCrash("resume", crashMessageWorkerGone)
+				}
+			})
+			if tc.running {
+				seedWireWorker(t, ctx, st, assignmentOf(mustReadActor(t, ctx, st, actorRef)))
+			}
+			reverted, err := w.RevertActor(ctx, actorRef)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := reverted.GetStatus().GetState(); got != ateapi.ActorState_ACTOR_STATE_SUSPENDED {
+				t.Errorf("state = %v, want SUSPENDED", got)
+			}
+			if got := reverted.GetStatus().GetCrash(); got != nil {
+				t.Errorf("Crash = %v, want cleared", got)
+			}
+			if got := reverted.GetStatus().GetSnapshots(); len(got) != 0 {
+				t.Errorf("snapshots = %v, want none", got)
+			}
+			if got := reverted.GetStatus().GetWorkerAssignment(); got != nil {
+				t.Errorf("assignment = %v, want released", got)
+			}
+			if checkpoints, _ := atelet.calls(); checkpoints != 0 {
+				t.Errorf("revert checkpointed %d times", checkpoints)
+			}
+			if tc.running {
+				if terminations.Load() != 1 {
+					t.Errorf("terminate calls = %d, want 1", terminations.Load())
+				}
+				if firstAssignment(t, st, wireTestAssignment().GetWorker().GetName()) != nil {
+					t.Error("revert did not release the worker")
+				}
+			}
+		})
 	}
 }
 

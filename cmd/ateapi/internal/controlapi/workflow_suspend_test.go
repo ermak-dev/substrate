@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -30,6 +31,8 @@ import (
 	"go.ate.dev/substrate/internal/installdefaults"
 	"go.ate.dev/substrate/internal/proto/ateletpb"
 	"go.ate.dev/substrate/internal/resources"
+	"go.ate.dev/substrate/internal/volume"
+	"go.ate.dev/substrate/pkg/sandboxclass"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/testing/protocmp"
@@ -1677,6 +1680,107 @@ func TestSuspendActor_Finalized_RecordsLocalCopyWhenKept(t *testing.T) {
 			want := []snapshotOutcome{{generation: 1, fidelity: memory, locality: tt.wantLocality, durable: completed}}
 			if diff := cmp.Diff(want, describeSnapshots(stored.GetStatus()), cmp.AllowUnexported(snapshotOutcome{})); diff != "" {
 				t.Errorf("snapshots mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+// FEATURE: A runtime without checkpoints refuses suspend before changing the actor.
+// SPEC: Client requests preserve execution, assignments and mounted volumes.
+func TestSuspendActor_CheckpointSupport(t *testing.T) {
+	memory := ateapi.SnapshotFidelity_SNAPSHOT_FIDELITY_MEMORY
+	volumes := ateapi.SnapshotFidelity_SNAPSHOT_FIDELITY_VOLUMES
+	syncMode := ateapi.DurabilityMode_DURABILITY_MODE_SYNCHRONOUS
+	asyncMode := ateapi.DurabilityMode_DURABILITY_MODE_ASYNCHRONOUS
+	runtime := func(class string) *ateapi.ActorSandboxRuntime {
+		return &ateapi.ActorSandboxRuntime{SandboxClass: class, Version: &ateapi.VersionedSandboxCompat{SchemaVersion: "v1", Attributes: []*ateapi.AttributeEntry{{Key: "architecture", Value: "fixture"}}}}
+	}
+	tests := []struct {
+		name      string
+		runtime   *ateapi.ActorSandboxRuntime
+		fidelity  ateapi.SnapshotFidelity
+		mode      ateapi.DurabilityMode
+		supported bool
+	}{
+		{"lxc sync memory", runtime("lxc"), memory, syncMode, false},
+		{"lxc async memory", runtime("lxc"), memory, asyncMode, false},
+		{"lxc sync volumes", runtime("lxc"), volumes, syncMode, false},
+		{"lxc async volumes", runtime("lxc"), volumes, asyncMode, false},
+		{"unrecognized runtime", runtime("future-runtime"), memory, syncMode, false},
+		{"gvisor", runtime(sandboxclass.GVisor), memory, syncMode, true},
+		{"microvm", runtime(sandboxclass.MicroVM), memory, asyncMode, true},
+		{"optional runtime metadata", nil, memory, syncMode, true},
+		{"runtime class required when metadata is present", runtime(""), memory, syncMode, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			persistence := newTestPersistence(t)
+			template := seedSuspendTemplate(t, ctx, persistence, &ateapi.SnapshotConfig{PreferredFidelity: tc.fidelity})
+			_, err := persistence.UpdateActorTemplate(ctx, resources.ActorTemplateRefFromActorTemplate(template), store.PreconditionFrom(template), func(tmpl *ateapi.ActorTemplate) error {
+				tmpl.Volumes = []*ateapi.Volume{{Name: "data"}}
+				tmpl.Containers = []*ateapi.Container{{VolumeMounts: []*ateapi.VolumeMount{{Name: "data"}}}}
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			assignment := wireTestAssignment()
+			assignment.SandboxRuntime = tc.runtime
+			ref := resources.ActorRef{Atespace: "team-a", Name: "actor-1"}
+			actor := storetest.MustCreateActor(t, ctx, persistence, &ateapi.Actor{
+				Metadata: &ateapi.ResourceMetadata{Atespace: ref.Atespace, Name: ref.Name}, ActorTemplate: suspendTestTemplateRef(),
+				Status: &ateapi.ActorStatus{State: ateapi.ActorState_ACTOR_STATE_RUNNING, AssignedNode: assignment.GetNodeName(), WorkerAssignment: assignment,
+					ExternalVolumes: &ateapi.ExternalVolumes{Volumes: []*ateapi.ExternalVolumeStatus{{Name: "data", StorageVolumeId: "storage-data", VolumeType: "mock"}}}},
+			})
+			seedWireWorker(t, ctx, persistence, assignmentOf(actor))
+			workerBefore, err := persistence.GetWorker(ctx, assignment.GetWorker().GetName())
+			if err != nil {
+				t.Fatal(err)
+			}
+			claimBefore := firstAssignment(t, persistence, assignment.GetWorker().GetName())
+			workflow, atelet := newWireCaptureWorkflow(t, persistence)
+			plugin := &mockDetachVolumePlugin{}
+			workflow.pluginRegistry = &mockPluginRegistry{plugins: map[string]volume.VolumePluginControlPlane{"mock": plugin}}
+			var terminations atomic.Int32
+			atelet.onTerminate = func() { terminations.Add(1) }
+			if !tc.supported {
+				atelet.onCheckpoint = func(context.Context) error { return apierror.Unimplemented("runtime has no checkpoints") }
+			}
+			control := &RPCService{actorWorkflow: workflow}
+			_, err = control.SuspendActor(ctx, &ateapi.SuspendActorRequest{Actor: ref.ToObjectRef(), Options: &ateapi.SuspendOptions{Mode: tc.mode}})
+			after := mustReadActor(t, ctx, persistence, ref)
+			checkpoints, promotes := atelet.calls()
+			if tc.supported {
+				if err != nil {
+					t.Fatalf("supported suspend failed: %v", err)
+				}
+				if checkpoints != 1 || len(plugin.detachCalls) != 1 || after.GetStatus().GetState() != ateapi.ActorState_ACTOR_STATE_SUSPENDED {
+					t.Fatalf("supported suspend: checkpoints=%d detach=%v state=%s", checkpoints, plugin.detachCalls, after.GetStatus().GetState())
+				}
+				return
+			}
+			if apierror.Code(err) != codes.FailedPrecondition {
+				t.Fatalf("unsupported suspend: error=%v code=%s state=%s checkpoints=%d", err, apierror.Code(err), after.GetStatus().GetState(), checkpoints)
+			}
+			if class := tc.runtime.GetSandboxClass(); class != "" && !strings.Contains(err.Error(), class) {
+				t.Errorf("error does not name runtime %q: %v", class, err)
+			}
+			if checkpoints != 0 || promotes != 0 || terminations.Load() != 0 || atelet.detachRequest() != nil || len(plugin.detachCalls) != 0 {
+				t.Errorf("unsupported suspend performed work: checkpoints=%d promotes=%d terminate=%d detach=%v volumes=%v", checkpoints, promotes, terminations.Load(), atelet.detachRequest(), plugin.detachCalls)
+			}
+			if diff := cmp.Diff(actor, after, protocmp.Transform()); diff != "" {
+				t.Errorf("actor changed (-before +after):\n%s", diff)
+			}
+			workerAfter, err := persistence.GetWorker(ctx, assignment.GetWorker().GetName())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(workerBefore, workerAfter, protocmp.Transform()); diff != "" {
+				t.Errorf("worker changed (-before +after):\n%s", diff)
+			}
+			if diff := cmp.Diff(claimBefore, firstAssignment(t, persistence, assignment.GetWorker().GetName()), protocmp.Transform()); diff != "" {
+				t.Errorf("assignment changed (-before +after):\n%s", diff)
 			}
 		})
 	}

@@ -16,6 +16,7 @@ package workerservice
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -24,9 +25,13 @@ import (
 
 	"go.ate.dev/substrate/api/ateapi/v1"
 	"go.ate.dev/substrate/cmd/ateapi/internal/ateletauth/ateletauthtest"
+	"go.ate.dev/substrate/cmd/ateapi/internal/controlapi"
 	"go.ate.dev/substrate/cmd/ateapi/internal/store"
 	"go.ate.dev/substrate/cmd/ateapi/internal/store/storetest"
 	"go.ate.dev/substrate/internal/apierror"
+	"go.ate.dev/substrate/internal/installdefaults"
+	"go.ate.dev/substrate/internal/resources"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 const (
@@ -224,5 +229,73 @@ func TestRequestActorSuspend_PassesThroughTheWorkflowsRefusal(t *testing.T) {
 		suspendRequest(actor.GetMetadata().GetUid()))
 	if got := apierror.Code(err); got != codes.FailedPrecondition {
 		t.Fatalf("code = %v (err %v), want FailedPrecondition", got, err)
+	}
+}
+
+// FEATURE: Worker-initiated suspend uses the runtime checkpoint precondition.
+// SPEC: An authenticated LXC worker cannot change its live actor or claim by asking to suspend.
+func TestRequestActorSuspend_UnsupportedCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	st, cleanup := storetest.SetupTestStore(t)
+	defer cleanup()
+	seedReportedWorker(t, st, testNode, &ateapi.WorkerResources{Actors: 1})
+	actor := seedHostedActor(t, st, testWorkerName)
+	template, err := st.CreateActorTemplate(ctx, &ateapi.ActorTemplate{Metadata: &ateapi.ResourceMetadata{Atespace: suspendAtespace, Name: "template"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := resources.ActorRefFromActor(actor)
+	actor, err = st.UpdateActor(ctx, ref, store.PreconditionFrom(actor), func(a *ateapi.Actor) error {
+		a.ActorTemplate = &ateapi.ObjectRef{Atespace: template.GetMetadata().GetAtespace(), Name: template.GetMetadata().GetName()}
+		a.Status.AssignedNode = testNode
+		a.Status.WorkerAssignment.NodeName = testNode
+		a.Status.WorkerAssignment.SandboxRuntime = &ateapi.ActorSandboxRuntime{SandboxClass: "lxc", Version: &ateapi.VersionedSandboxCompat{SchemaVersion: "v1", Attributes: []*ateapi.AttributeEntry{{Key: "architecture", Value: "fixture"}}}}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.BindActorToWorker(ctx, testWorkerName, &ateapi.ActorAssignment{Actor: ref.ToObjectRef(), ActorUid: actor.GetMetadata().GetUid()}, nil); err != nil {
+		t.Fatal(err)
+	}
+	workerBefore, err := st.GetWorker(ctx, testWorkerName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimBefore, err := st.GetWorkerAssignment(ctx, testWorkerName, actor.GetMetadata().GetUid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, informer := controlapi.AteletInformer(fake.NewClientset(), installdefaults.SystemNamespace)
+	dialer := controlapi.NewAteletDialer(informer.GetIndexer(), testAteletSPIFFEID, "", "")
+	control := controlapi.NewRPCService(st, nil, nil, nil, dialer, nil, "", nil, nil, "", nil, nil, "gs://snapshots")
+	service := New(st, control, testAteletSPIFFEID, nil, "", nil)
+	_, err = service.RequestActorSuspend(ateletauthtest.ContextWith(ateletauthtest.CertOn(t, testNode)), suspendRequest(actor.GetMetadata().GetUid()))
+	after, readErr := st.GetActor(ctx, ref)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if apierror.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("worker suspend: code=%s state=%s err=%v", apierror.Code(err), after.GetStatus().GetState(), err)
+	}
+	if !strings.Contains(err.Error(), "lxc") {
+		t.Errorf("error does not name runtime: %v", err)
+	}
+	if diff := cmp.Diff(actor, after, protocmp.Transform()); diff != "" {
+		t.Errorf("actor changed (-before +after):\n%s", diff)
+	}
+	workerAfter, err := st.GetWorker(ctx, testWorkerName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(workerBefore, workerAfter, protocmp.Transform()); diff != "" {
+		t.Errorf("worker changed (-before +after):\n%s", diff)
+	}
+	claimAfter, err := st.GetWorkerAssignment(ctx, testWorkerName, actor.GetMetadata().GetUid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(claimBefore, claimAfter, protocmp.Transform()); diff != "" {
+		t.Errorf("claim changed (-before +after):\n%s", diff)
 	}
 }

@@ -4,6 +4,15 @@ Substrate delivers zero trust for agents. Every agent has an identity, but no cr
 
 Agent Substrate executes untrusted actors at scale in a multi-tenant environment where workloads are dynamic and memory states migrate continuously across physical infrastructure. All security controls operate within Substrate's cold-start and resume latency budget. This document defines the high-level security principles. For identity and credential configuration, see the [Authentication Guide](authentication.md). Detailed threat scenarios and mitigating invariants are documented [in the threat model](threat-model.md).
 
+## Experimental LXC exception
+
+This fork also has an opt-in `lxc` class for trusted workloads. LXC shares the
+node kernel and uses broader capabilities with unconfined AppArmor and seccomp.
+The strong sandbox guarantees below apply to gVisor and microVM, not LXC.
+Do not put hostile tenants on LXC workers or treat the guest as a kernel boundary.
+The actor identity, atunnel policy and lifecycle cleanup paths remain in use.
+LXC has no memory checkpoints. See the [worker documentation](../cmd/ateworker-lxc/README.md).
+
 ## Security Scope
 
 Substrate provides the foundational base for agent security:
@@ -40,7 +49,7 @@ Substrate is designed to safely run mutually hostile, untrusted actors from disp
 
 | Principle | Description | Status |
 | :--- | :--- | :--- |
-| **Always Sandboxed** | Every actor is required to run inside a strong compute sandbox. A linux container is not sufficient or supported. Our security design relies on strong containment. | Met (gVisor, CHV microVM) |
+| **Always Sandboxed** | gVisor and microVM actors require a strong compute sandbox. Experimental LXC is restricted to trusted workloads and does not provide this guarantee. | Met (gVisor, CHV microVM) |
 | **Per-Actor Storage Segregation** | Storage and persistent volume state must be strictly segregated per actor. Actors cannot traverse, enumerate, or access persistence belonging to other actors. Restoring a snapshot must re-validate the actor's current tenant authorization before execution resumes. | Met (Segregation)<br>Future (Per-Actor Encryption, Restore Authorization) |
 | **Per-Actor Network Isolation** | Guest network stacks are segregated per actor. Lateral peer-to-peer network communication between co-located actors on the same host or across the cluster is blocked by default; inter-actor communication must route through authenticated, policy-enforced gateways. | Met (Private netns, atunnel) |
 | **Delete Guarantee** | Reset, scrub, and sanitize local ephemeral volumes, cached state, and worker runtime environments between actor scheduling cycles to prevent cross-tenant data leakage. | In Progress (atelet resetActorDirs) |

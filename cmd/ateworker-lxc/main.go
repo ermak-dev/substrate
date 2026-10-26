@@ -15,19 +15,26 @@
 // limitations under the License.
 
 // Command ateworker-lxc registers an experimental shared-kernel worker.
-// It advertises no actor capacity until workload lifecycle support is available.
+// It runs one actor per worker without memory checkpoints.
 package main
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"go.ate.dev/substrate/internal/actorlog"
+	"go.ate.dev/substrate/internal/ateworker/actornet"
+	"go.ate.dev/substrate/internal/ateworker/cgroup"
+	"go.ate.dev/substrate/internal/workerstats"
 	"log/slog"
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
+	"time"
 
+	"cloud.google.com/go/compute/metadata"
 	"github.com/spf13/pflag"
 	"go.ate.dev/substrate/internal/ateinterceptors"
 	"go.ate.dev/substrate/internal/ateworker/pid1"
@@ -71,7 +78,7 @@ func (o *options) reportConfig() register.ReportConfig {
 		CredentialBundlePath: o.tunnel.CredentialBundle,
 		TrustBundlePath:      o.tunnel.TrustBundle,
 		AteletSPIFFEID:       o.tunnel.BrokerIdentity,
-		Actors:               0,
+		Actors:               1,
 		PodIPs:               register.ParsePodIPs(o.podIPs),
 		SandboxClass:         sandboxclass.LXC,
 		RuntimesFile:         nodepath.WorkerSandboxRuntimesPath(o.podUID),
@@ -79,6 +86,13 @@ func (o *options) reportConfig() register.ReportConfig {
 }
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "actor-init" {
+		if err := actorInit(os.Args[2]); err != nil {
+			fmt.Fprintln(os.Stderr, "actor init failed:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	pid1.RunIfPID1()
 	o := newOptions(pflag.CommandLine)
 	pflag.Parse()
@@ -95,7 +109,8 @@ func main() {
 }
 
 func run(ctx context.Context, o *options) error {
-	serverboot.InitLogger()
+	logWriter := actorlog.NewSyncedWriter(os.Stdout)
+	serverboot.InitLoggerWithWriter(logWriter)
 	if err := serverboot.SetLogLevel(o.logLevel); err != nil {
 		return err
 	}
@@ -137,9 +152,34 @@ func run(ctx context.Context, o *options) error {
 		defer serverboot.ShutdownProvider("LoggerProvider", lp.Shutdown)
 	}
 
+	if err := cgroup.Delegate(ctx); err != nil {
+		return err
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	tunnel, err := atunnel.Start(ctx, *o.tunnel, actornet.ActorHTTPUpstream)
+	if err != nil {
+		return err
+	}
+	reporter, err := register.NewCrashReporter(cfg)
+	if err != nil {
+		return err
+	}
+	actorLogger := actorlog.NewActorLogger(logWriter, metadata.OnGCE())
+	backend := newLXCBackend(filepath.Join(nodepath.WorkerPath(o.podUID), "lxc"), executable, actorLogger, tunnel)
+	usageStdout := workerstats.NewStdoutHandler(logWriter)
+	defer usageStdout.Close()
+	usage := workerstats.NewUsageEmitter(lp, usageStdout, workerstats.Pool{Namespace: os.Getenv("POD_NAMESPACE"), Name: os.Getenv("WORKER_POOL_NAME")})
+	worker := newWorkerService(ctx, backend, reporter, usage)
+	if err := worker.recover(ctx); err != nil {
+		return fmt.Errorf("recovering LXC workers: %w", err)
+	}
 	if err := os.MkdirAll(nodepath.WorkerPath(o.podUID), 0o700); err != nil {
 		return err
 	}
+	defer workerstats.StartSampler(ctx, time.Minute, worker.sweepUsage)()
 	socket := nodepath.WorkerSocketPath(o.podUID)
 	if err := os.Remove(socket); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -157,23 +197,22 @@ func run(ctx context.Context, o *options) error {
 		}
 	}()
 	server := grpc.NewServer(grpc.StatsHandler(otelgrpc.NewServerHandler()), grpc.UnaryInterceptor(ateinterceptors.InternalServerUnaryInterceptor))
-	ateworkerpb.RegisterWorkerServer(server, &registrationWorker{})
-	var epoch register.Epoch
+	ateworkerpb.RegisterWorkerServer(server, worker)
 	readiness := &serverboot.Readiness{}
-	readiness.AddCheck("registered", epoch.Registered)
+	readiness.AddCheck("registered", worker.epoch.Registered)
 	group, ctx := errgroup.WithContext(ctx)
-	group.Go(func() error { return register.Report(ctx, cfg, &epoch) })
+	group.Go(func() error { return register.Report(ctx, cfg, &worker.epoch) })
 	group.Go(func() error { return server.Serve(listener) })
-	group.Go(func() error { <-ctx.Done(); readiness.MarkNotReady(); server.GracefulStop(); return nil })
+	group.Go(func() error {
+		<-ctx.Done()
+		readiness.MarkNotReady()
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		err := worker.shutdown(shutdownCtx)
+		server.GracefulStop()
+		return err
+	})
 	go serverboot.StartHealthServer(ctx, o.readinessAddress, readiness)
-	slog.InfoContext(ctx, "LXC registration-only worker serving with zero actor capacity", slog.String("socket", socket))
+	slog.InfoContext(ctx, "LXC worker serving", slog.String("socket", socket))
 	return group.Wait()
-}
-
-type registrationWorker struct {
-	ateworkerpb.UnimplementedWorkerServer
-}
-
-func (*registrationWorker) GetActiveWorkloadStats(context.Context, *ateworkerpb.GetActiveWorkloadStatsRequest) (*ateworkerpb.GetActiveWorkloadStatsResponse, error) {
-	return &ateworkerpb.GetActiveWorkloadStatsResponse{}, nil
 }

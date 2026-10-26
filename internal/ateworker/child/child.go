@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package child runs the long-lived subprocesses ateworker-microvm owns, and reaps
+// Package child runs long-lived worker subprocesses and reaps
 // each as soon as it exits.
 package child
 

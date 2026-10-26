@@ -341,6 +341,16 @@ A `WorkerPool` selects a **sandbox class** (`spec.sandboxClasses[].name`), and e
 
   * **microVM** (`ateworker-microvm`): Runs the workload inside a [Kata Containers](https://katacontainers.io/) guest on the [Cloud Hypervisor](https://www.cloudhypervisor.org/) VMM. Suspend and resume capture a memory-only VM snapshot and restore it on-demand using `userfaultfd` memory demand-paging. Container rootfs writes are host-backed: the overlay is assembled on the host (read-only OCI image lower plus a per-actor writable upper) and served to the guest over the single virtio-fs share, so they cost reclaimable host page cache rather than guest RAM, and `ROOTFS` and `MEMORY` snapshots ship the upper as its own tar (a `ROOTFS` restore puts it back and cold-boots on it). `DurableDir` volumes travel over that same share and are likewise shipped as a tar, so a `VOLUMES` snapshot can capture them without any guest memory. Each volume is a subdirectory of the share, so an actor can have several at no extra cost in devices.
 
+### Experimental LXC worker
+
+The fork's `lxc` class runs trusted actors in Linux containers sharing the node
+kernel. Each worker has one actor slot. It uses the existing OCI bundles,
+rootfs overlays, atunnel and WorkerSupport protocol. A failed teardown keeps
+the slot occupied until cleanup succeeds. Startup cleans recorded LXC state
+before registering capacity. LXC cannot checkpoint or restore memory; templates
+must disable golden snapshots. See the [LXC worker](../cmd/ateworker-lxc/README.md)
+for its security limits and tests.
+
 ### Networking Stack (`atenet` + `atunnel`)
 
 Handles actor-aware routing and automatic re-animation.

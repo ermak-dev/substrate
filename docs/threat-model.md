@@ -1,6 +1,6 @@
 # Substrate Threat Model
 
-Last updated: Oct 14, 2026
+Last updated: Oct 26, 2026
 
 
 # Overview
@@ -8,6 +8,15 @@ Last updated: Oct 14, 2026
 Agent Substrate orchestrates stateful AI agents at high scale and density on Kubernetes, multiplexing untrusted, mutually hostile actors across a shared pool of worker Pods while maintaining sub-second cold-start and snapshot resume latency. Because actors execute untrusted code and migrate across physical infrastructure, Substrate enforces VM-grade sandboxing (`gVisor` and `Cloud Hypervisor` microVMs), per-actor cryptographic identity (`SPIFFE` X.509 certificates and JWTs), zero ambient credentials inside sandboxes, default-deny networking with authenticated ingress and egress proxies, and relationship-based access control (`OpenFGA`).
 
 This threat model catalogs the security threats inherent to high-density stateful agent orchestration and defines the mitigating invariants and suggested mechanisms required to neutralize each threat. See the [Security Guide](security.md) for the high-level security architecture, principles, and implementation status.
+
+# Experimental LXC scope
+
+The fork's opt-in LXC class is outside the hostile-tenant sandbox assumptions
+below. It shares the node kernel, uses broader capabilities and has unconfined
+AppArmor and seccomp profiles. LXC actors must be trusted. Network policy and
+identity still apply, but do not protect against a kernel escape or replace
+strong compute isolation. There is no memory checkpoint or restore path.
+See [LXC worker constraints](../cmd/ateworker-lxc/README.md).
 
 # Scope
 

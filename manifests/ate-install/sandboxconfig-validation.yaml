@@ -48,6 +48,13 @@ spec:
           ['cloud-hypervisor', 'virtiofsd', 'kata-kernel', 'kata-image']
             .all(name, name in v.assets[arch])))
     message: "a microvm SandboxConfig must define cloud-hypervisor, virtiofsd, kata-kernel, and kata-image assets for every architecture of every version under spec.versions[].assets"
+  # LXC uses the worker image's userspace and the node's kernel.
+  - expression: >-
+      object.spec.sandboxClass != 'lxc' ||
+      object.spec.versions.all(v,
+        has(v.assets) && size(v.assets) > 0 &&
+        v.assets.all(arch, size(v.assets[arch]) == 0))
+    message: "an lxc SandboxConfig must list supported architectures with empty asset maps; the runtime is contained in the worker image"
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding

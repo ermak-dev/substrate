@@ -201,11 +201,15 @@ func planVersions(cfg *atev1.SandboxConfig) ([]versionPlan, error) {
 }
 
 // recordForArch projects the assets of one version of a SandboxConfig onto
-// this node's architecture. It reports false when the version lists no assets
-// for this architecture.
+// this node's architecture. LXC requires an explicitly empty asset map; other
+// classes require assets for this architecture.
 func recordForArch(cfg *atev1.SandboxConfig, ver *atev1.SandboxVersionConfig) (*sandboxAssetsRecord, bool) {
-	files := ver.Assets[runtime.GOARCH]
-	if len(files) == 0 {
+	files, present := ver.Assets[runtime.GOARCH]
+	if cfg.Spec.SandboxClass == atev1.SandboxClassLXC {
+		if !present || len(files) != 0 {
+			return nil, false
+		}
+	} else if len(files) == 0 {
 		return nil, false
 	}
 	rec := &sandboxAssetsRecord{
@@ -300,6 +304,7 @@ func (s *workerSandboxSyncer) buildFile(ctx context.Context, plan *sandboxPlan, 
 // sandbox_bundle_hash is hash: architecture and the hash for every class,
 // the host CPU identity for a microVM runtime (with its assets verified in
 // the local cache), and the runsc binary's cpu_features for a gVisor one.
+// LXC has no external assets or snapshot compatibility attributes.
 // isDefault makes the microVM asset check skip the memo.
 func (s *workerSandboxSyncer) versionAttrs(ctx context.Context, class atev1.SandboxClass, rec *sandboxAssetsRecord, hash string, isDefault bool) (sandboxruntimes.Attributes, error) {
 	attrs := sandboxruntimes.Attributes{
@@ -307,6 +312,10 @@ func (s *workerSandboxSyncer) versionAttrs(ctx context.Context, class atev1.Sand
 		hardware.AttrSandboxBundleHash: hash,
 	}
 	switch class {
+	case atev1.SandboxClassLXC:
+		if len(rec.Assets) != 0 {
+			return nil, fmt.Errorf("%w: lxc runtime assets must be contained in the worker image", errPermanent)
+		}
 	case atev1.SandboxClassMicroVM:
 		vendor, model, err := s.hostCPUIdentity()
 		if err != nil {

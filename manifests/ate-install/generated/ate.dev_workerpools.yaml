@@ -108,10 +108,12 @@ spec:
                         name selects the sandbox runtime family, which drives the worker pod
                         shape (KVM/vhost device mounts and node placement). The concrete binary
                         is still selected by WorkerImage. The sandbox binaries themselves come
-                        from the SandboxConfig referenced by ConfigRef (or the class default).
+                        from the SandboxConfig referenced by ConfigRef (or the class default),
+                        except LXC, whose userspace is included in WorkerImage.
                       enum:
                       - gvisor
                       - microvm
+                      - lxc
                       type: string
                   required:
                   - name
@@ -594,6 +596,7 @@ spec:
                       enum:
                       - gvisor
                       - microvm
+                      - lxc
                       type: string
                     pendingConfigRef:
                       description: |-

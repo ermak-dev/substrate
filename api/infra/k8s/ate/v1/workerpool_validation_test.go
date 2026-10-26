@@ -120,6 +120,8 @@ func TestWorkerPoolValidation(t *testing.T) {
 		wantErr: true,
 		errMsg:  "spec.sandboxClasses[0].name: Unsupported value",
 	}, {
+		name:   "lxc sandboxClass",
+		mutate: func(wp *WorkerPool) { wp.Spec.SandboxClasses = []WorkerPoolSandboxClass{{Name: "lxc"}} }}, {
 		name: "sandboxClass with configRef",
 		mutate: func(wp *WorkerPool) {
 			wp.Spec.SandboxClasses = []WorkerPoolSandboxClass{{

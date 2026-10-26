@@ -30,6 +30,8 @@ const (
 	// SandboxClassMicroVM is the micro-VM runtime (cmd/ateworker-microvm); needs
 	// /dev/kvm and vhost devices.
 	SandboxClassMicroVM SandboxClass = sandboxclass.MicroVM
+	// SandboxClassLXC is the experimental shared-kernel LXC runtime.
+	SandboxClassLXC SandboxClass = sandboxclass.LXC
 )
 
 // AssetFile is one content-addressed file that atelet fetches for a sandbox
@@ -120,9 +122,10 @@ type SandboxVersionConfig struct {
 	// asset names are interpreted by the sandbox backend: gVisor expects a
 	// "gvisor" asset (the release's gvisor.tar.zstd, which atelet extracts so
 	// the gvisor-bin/ helpers sit next to runsc); a micro-VM backend expects
-	// several (e.g. "cloud-hypervisor", "kata-kernel", "kata-image"). The
-	// schema is intentionally generic; per-class requirements are enforced by
-	// a ValidatingAdmissionPolicy.
+	// several (e.g. "cloud-hypervisor", "kata-kernel", "kata-image").
+	// LXC ships in the worker image and requires an empty asset map for each
+	// supported architecture. A ValidatingAdmissionPolicy enforces per-class
+	// requirements.
 	//
 	// +optional
 	Assets map[string]map[string]AssetFile `json:"assets,omitempty"`
@@ -138,7 +141,7 @@ type SandboxConfigSpec struct {
 	// in its spec.sandboxClasses.
 	//
 	// +optional
-	// +kubebuilder:validation:Enum=gvisor;microvm
+	// +kubebuilder:validation:Enum=gvisor;microvm;lxc
 	// +kubebuilder:default=gvisor
 	SandboxClass SandboxClass `json:"sandboxClass,omitempty"`
 

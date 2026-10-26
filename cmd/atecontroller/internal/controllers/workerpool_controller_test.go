@@ -19,14 +19,17 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	k8errors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -41,17 +44,22 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	atev1 "go.ate.dev/substrate/api/infra/k8s/ate/v1"
 	"go.ate.dev/substrate/internal/ateattr"
 	"go.ate.dev/substrate/internal/installdefaults"
+	"go.ate.dev/substrate/internal/resources"
 	"go.ate.dev/substrate/internal/testenv"
 )
 
 var (
-	cfg       *rest.Config
-	k8sClient client.Client
+	cfg           *rest.Config
+	k8sClient     client.Client
+	cachedReader  client.Reader
+	reconcileGate sync.RWMutex
 )
 
 func TestMain(m *testing.M) {
@@ -79,12 +87,22 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	if err := (&WorkerPoolReconciler{
+	cachedReader = mgr.GetClient()
+	workerPoolReconciler := &WorkerPoolReconciler{
 		Client:    mgr.GetClient(),
 		Scheme:    mgr.GetScheme(),
 		Recorder:  mgr.GetEventRecorder("workerpool-controller"),
 		APIReader: mgr.GetAPIReader(),
-	}).SetupWithManager(mgr); err != nil {
+	}
+	if err := workerPoolReconciler.InitMetrics(otel.Meter("atecontroller")); err != nil {
+		fmt.Fprintf(os.Stderr, "workerpool metrics setup failed: %v\n", err)
+		os.Exit(1)
+	}
+	if err := ctrl.NewControllerManagedBy(mgr).
+		For(&atev1.WorkerPool{}).
+		Owns(&appsv1.Deployment{}).
+		Watches(&atev1.SandboxConfig{}, handler.EnqueueRequestsFromMapFunc(workerPoolReconciler.workerPoolsForSandboxConfig)).
+		Complete(gatedReconciler(workerPoolReconciler)); err != nil {
 		fmt.Fprintf(os.Stderr, "controller setup failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -104,12 +122,17 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	if err := (&NetworkPolicyReconciler{
+	networkPolicyReconciler := &NetworkPolicyReconciler{
 		Client:          mgr.GetClient(),
 		Scheme:          mgr.GetScheme(),
 		SystemNamespace: installdefaults.SystemNamespace,
 		Recorder:        mgr.GetEventRecorder("networkpolicy-controller"),
-	}).SetupWithManager(mgr); err != nil {
+	}
+	if err := ctrl.NewControllerManagedBy(mgr).
+		Named("networkpolicy").
+		For(&atev1.WorkerPool{}).
+		Owns(&networkingv1.NetworkPolicy{}).
+		Complete(gatedReconciler(networkPolicyReconciler)); err != nil {
 		fmt.Fprintf(os.Stderr, "netpolicy controller setup failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -675,15 +698,72 @@ func makeWorkerPool(name, ns string, replicas int32, image string) *atev1.Worker
 	}
 }
 
-// deleteOnCleanup registers a cleanup that deletes obj. It uses its own
-// context because t.Context() is already canceled when cleanups run.
+// The gate drains controller writes while envtest dependents are removed.
+func gatedReconciler(r reconcile.Reconciler) reconcile.Reconciler {
+	return reconcile.Func(func(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+		reconcileGate.RLock()
+		defer reconcileGate.RUnlock()
+		return r.Reconcile(ctx, req)
+	})
+}
+
+func waitCleanupDeletion(t *testing.T, ctx context.Context, obj client.Object) bool {
+	t.Helper()
+	err := wait.PollUntilContextCancel(ctx, 10*time.Millisecond, true, func(ctx context.Context) (bool, error) {
+		for _, reader := range []client.Reader{k8sClient, cachedReader} {
+			err := reader.Get(ctx, client.ObjectKeyFromObject(obj), obj.DeepCopyObject().(client.Object))
+			if k8errors.IsNotFound(err) {
+				continue
+			}
+			return false, err
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Errorf("cleanup: wait for %T %s deletion: %v", obj, obj.GetName(), err)
+	}
+	return err == nil
+}
+
+// deleteOnCleanup uses a fresh context because t.Context() is canceled before cleanup.
 func deleteOnCleanup(t *testing.T, obj client.Object) {
 	t.Helper()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
+		wp, isWorkerPool := obj.(*atev1.WorkerPool)
+		if isWorkerPool {
+			reconcileGate.Lock()
+			defer reconcileGate.Unlock()
+		}
 		if err := client.IgnoreNotFound(k8sClient.Delete(ctx, obj)); err != nil {
 			t.Errorf("cleanup: delete %s: %v", obj.GetName(), err)
+			return
+		}
+		if !isWorkerPool || !waitCleanupDeletion(t, ctx, obj) {
+			return
+		}
+		// envtest runs no garbage collector for the pool's dependents.
+		for _, child := range []client.Object{
+			&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: wp.Name, Namespace: wp.Namespace}},
+			&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: resources.NetworkPolicyName(wp.Name), Namespace: wp.Namespace}},
+		} {
+			if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(child), child); err != nil {
+				if k8errors.IsNotFound(err) {
+					waitCleanupDeletion(t, ctx, child)
+				} else {
+					t.Errorf("cleanup: get %T %s: %v", child, child.GetName(), err)
+				}
+				continue
+			}
+			if !metav1.IsControlledBy(child, wp) {
+				continue
+			}
+			if err := client.IgnoreNotFound(k8sClient.Delete(ctx, child, client.Preconditions{UID: ptr.To(child.GetUID())})); err != nil {
+				t.Errorf("cleanup: delete %T %s: %v", child, child.GetName(), err)
+				continue
+			}
+			waitCleanupDeletion(t, ctx, child)
 		}
 	})
 }
@@ -830,5 +910,27 @@ func TestWorkerPoolMetrics(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("observed %v, want %v", got, want)
+	}
+}
+
+func TestWorkerPoolFixtureCleanup(t *testing.T) {
+	wp := makeWorkerPool("test-fixture-cleanup", "default", 1, "worker:v1")
+	t.Run("create", func(t *testing.T) {
+		createWorkerPool(t, wp)
+		waitResolvedAndDeployed(t, wp, testGvisorDefault)
+		eventually(t, func(ctx context.Context) (bool, error) {
+			err := k8sClient.Get(ctx, client.ObjectKey{Name: resources.NetworkPolicyName(wp.Name), Namespace: wp.Namespace}, &networkingv1.NetworkPolicy{})
+			return err == nil, client.IgnoreNotFound(err)
+		})
+	})
+	for _, obj := range []client.Object{
+		&atev1.WorkerPool{ObjectMeta: metav1.ObjectMeta{Name: wp.Name, Namespace: wp.Namespace}},
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: wp.Name, Namespace: wp.Namespace}},
+		&networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Name: resources.NetworkPolicyName(wp.Name), Namespace: wp.Namespace}},
+	} {
+		err := k8sClient.Get(t.Context(), client.ObjectKeyFromObject(obj), obj)
+		if !k8errors.IsNotFound(err) {
+			t.Errorf("%T remained after fixture cleanup: %v", obj, err)
+		}
 	}
 }

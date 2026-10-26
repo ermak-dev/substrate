@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -324,7 +325,13 @@ func TestSandboxConfigSandboxClassDefault(t *testing.T) {
 	if err := k8sClient.Create(ctx, sc); err != nil {
 		t.Fatalf("Create() unexpected error: %v", err)
 	}
-	t.Cleanup(func() { _ = k8sClient.Delete(ctx, sc) })
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := client.IgnoreNotFound(k8sClient.Delete(ctx, sc)); err != nil {
+			t.Errorf("cleanup: delete SandboxConfig %s: %v", sc.Name, err)
+		}
+	})
 
 	if sc.Spec.SandboxClass != SandboxClassGvisor {
 		t.Errorf("SandboxClass = %q, want %q", sc.Spec.SandboxClass, SandboxClassGvisor)
@@ -337,7 +344,13 @@ func TestSandboxConfigUpdateRemovingDefaultVersion(t *testing.T) {
 	if err := k8sClient.Create(ctx, sc); err != nil {
 		t.Fatalf("Create() unexpected error: %v", err)
 	}
-	t.Cleanup(func() { _ = k8sClient.Delete(ctx, sc) })
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := client.IgnoreNotFound(k8sClient.Delete(ctx, sc)); err != nil {
+			t.Errorf("cleanup: delete SandboxConfig %s: %v", sc.Name, err)
+		}
+	})
 
 	// Dropping the version defaultVersion names must be denied.
 	sc.Spec.Versions = sc.Spec.Versions[1:]
@@ -392,6 +405,25 @@ func TestShippedSandboxConfigManifests(t *testing.T) {
 					t.Errorf("cleanup: delete SandboxConfig %s: %v", sc.Name, err)
 				}
 			})
+		})
+	}
+}
+
+func TestSandboxConfigFixtureCleanup(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"default-class", TestSandboxConfigSandboxClassDefault},
+		{"update-remove-default", TestSandboxConfigUpdateRemovingDefaultVersion},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Run("create", tc.run)
+			sc := &SandboxConfig{}
+			err := k8sClient.Get(t.Context(), client.ObjectKey{Name: tc.name}, sc)
+			if !apierrors.IsNotFound(err) {
+				t.Fatalf("SandboxConfig remained after fixture cleanup: %v", err)
+			}
 		})
 	}
 }

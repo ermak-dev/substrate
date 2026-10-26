@@ -31,6 +31,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"go.ate.dev/substrate/internal/testcert"
 )
 
 func TestConnectStoreRequiresPostgresReadWriteConnectionString(t *testing.T) {
@@ -310,9 +312,7 @@ func writeCA(t *testing.T, path, cn string) {
 		t.Fatalf("CreateCertificate() error = %v", err)
 	}
 	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
-	if err := os.WriteFile(path, pemBytes, 0o600); err != nil {
-		t.Fatalf("WriteFile(%s) error = %v", path, err)
-	}
+	testcert.ReplaceFile(t, path, pemBytes)
 }
 
 func TestRejectStorageEnv(t *testing.T) {

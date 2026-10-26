@@ -15,9 +15,10 @@
 package main
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
+
+	"go.ate.dev/substrate/internal/testcert"
 )
 
 func TestAteletServerTLSConfigRejectsUnreadableCACerts(t *testing.T) {
@@ -32,9 +33,7 @@ func TestAteletServerTLSConfigRejectsUnreadableCACerts(t *testing.T) {
 // frozen at the config's construction.
 func TestAteletServerTLSConfigReloadsCACertsWithoutRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "trust-bundle.pem")
-	if err := os.WriteFile(path, testCertPEM(t), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
+	testcert.ReplaceFile(t, path, testCertPEM(t))
 
 	cfg, err := ateletServerTLSConfig("/nonexistent-cred-bundle.pem", path, allowAll)
 	if err != nil {
@@ -49,9 +48,7 @@ func TestAteletServerTLSConfigReloadsCACertsWithoutRestart(t *testing.T) {
 		t.Fatalf("GetConfigForClient() first call error = %v", err)
 	}
 
-	if err := os.WriteFile(path, testCertPEM(t), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
+	testcert.ReplaceFile(t, path, testCertPEM(t))
 
 	after, err := cfg.GetConfigForClient(nil)
 	if err != nil {

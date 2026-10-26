@@ -31,7 +31,6 @@ import (
 	"sync"
 	"time"
 
-	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"go.ate.dev/substrate/internal/actorlog"
 	"go.ate.dev/substrate/internal/ateworker/actornet"
 	"go.ate.dev/substrate/internal/ateworker/cgroup"
@@ -125,7 +124,7 @@ func (b *lxcBackend) Start(ctx context.Context, req *ateworkerpb.RunWorkloadRequ
 			return nil, err
 		}
 	}
-	for _, container := range record.Containers {
+	for i, container := range record.Containers {
 		bundle := filepath.Join(req.ActorDirs.OciBundleDir, container.Name)
 		if err := imagecache.SetupBundleRootfs(bundle); err != nil {
 			return nil, err
@@ -134,15 +133,11 @@ func (b *lxcBackend) Start(ctx context.Context, req *ateworkerpb.RunWorkloadRequ
 		if err := actornet.WriteRootfsEtcFiles(rootfs, "actor"); err != nil {
 			return nil, err
 		}
-		data, err := os.ReadFile(filepath.Join(bundle, "config.json"))
+		spec, err := prepareOCISpec(uid, req.ActorDirs, req.Spec.Containers[i])
 		if err != nil {
 			return nil, err
 		}
-		var spec specs.Spec
-		if err := json.Unmarshal(data, &spec); err != nil {
-			return nil, err
-		}
-		config, err := lxcConfig(uid, bundle, container.Helper, b.executable, &spec)
+		config, err := lxcConfig(uid, bundle, container.Helper, b.executable, spec)
 		if err != nil {
 			return nil, err
 		}

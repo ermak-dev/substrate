@@ -74,6 +74,10 @@ func RunTestMain(m *testing.M) int {
 	}
 
 	if !RunE2E {
+		if runtimeE2ERequired() {
+			fmt.Fprintln(os.Stderr, "--e2e is required for the selected LXC CI lane")
+			return 1
+		}
 		fmt.Println(Colorf(`
         <yellow>This is an e2e test suite and does not run by default.
         Run with "go test ./internal/e2e/... -args --e2e"</yellow>`))

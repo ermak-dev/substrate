@@ -41,7 +41,8 @@ func substrateTemplateSubstitutions(bucket, name string, trustBundles []string) 
 	}
 	blocks = map[string]string{
 		// Off unless the caller opts in; see WithTrustBundle.
-		"${TEMPLATE_TRUST_BUNDLE}": "",
+		"${TEMPLATE_TRUST_BUNDLE}":  "",
+		"${GOLDEN_SNAPSHOT_CONFIG}": "",
 	}
 	if len(trustBundles) > 0 {
 		// Indented to sit in a template's systemInfo dataSources list. Each
@@ -51,6 +52,11 @@ func substrateTemplateSubstitutions(bucket, name string, trustBundles []string) 
 			block += "        - " + bundle + "\n"
 		}
 		blocks["${TEMPLATE_TRUST_BUNDLE}"] = block + "        path: trust-bundle.pem"
+	}
+	if IsLXC() {
+		inline["${FIXTURE_SUFFIX}"] = "-lxc-" + name
+		blocks["${GOLDEN_SNAPSHOT_CONFIG}"] = "  goldenSnapshotConfig:\n    mode: GOLDEN_SNAPSHOT_MODE_DISABLED"
+		return inline, blocks
 	}
 	if !IsMicroVM() {
 		return inline, blocks

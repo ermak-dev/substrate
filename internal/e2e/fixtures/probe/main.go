@@ -36,6 +36,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -598,6 +599,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/whoami", whoami)
+	mux.HandleFunc("/memory", newMemoryStateHandler())
 	mux.HandleFunc("/fetch", fetch)
 	mux.HandleFunc("/readfile", readfile)
 	mux.HandleFunc("/writefile", writefile)
@@ -611,5 +613,16 @@ func main() {
 	server := &http.Server{Addr: addr, Handler: mux}
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("probe server: %v", err)
+	}
+}
+
+// newMemoryStateHandler retains a marker only in this process, never on disk.
+func newMemoryStateHandler() http.HandlerFunc {
+	var counter atomic.Uint64
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			counter.Add(1)
+		}
+		writeJSON(w, map[string]string{"value": strconv.FormatUint(counter.Load(), 10)})
 	}
 }

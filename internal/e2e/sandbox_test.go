@@ -263,3 +263,72 @@ func TestSubstrateCounterFixture(t *testing.T) {
 		}
 	})
 }
+
+// LXC fixtures must not silently run gVisor or create a golden checkpoint.
+func TestRenderLXCProbeFixture(t *testing.T) {
+	t.Setenv(sandboxClassEnv, "lxc")
+	t.Setenv("E2E_LXC_WORKER_IMAGE", "registry.example/lxc@sha256:"+strings.Repeat("a", 64))
+	pool := renderPool(t, "internal/e2e/fixtures/probe/probe.yaml.tmpl")
+	if pool.Spec.DefaultSandboxClass() != "lxc" {
+		t.Fatalf("class = %q, want lxc", pool.Spec.DefaultSandboxClass())
+	}
+	if pool.Spec.WorkerImage != os.Getenv("E2E_LXC_WORKER_IMAGE") {
+		t.Fatalf("worker image = %q", pool.Spec.WorkerImage)
+	}
+	if got := FixtureName("probe"); got != "probe-lxc" {
+		t.Errorf("fixture name = %q", got)
+	}
+	templates := renderTemplates(t, "internal/e2e/fixtures/probe/probe-template.yaml.tmpl", nil)
+	if templates[0].GetSnapshotConfig().GetGoldenSnapshotConfig().GetMode() != ateapi.GoldenSnapshotMode_GOLDEN_SNAPSHOT_MODE_DISABLED {
+		t.Fatal("LXC fixture still requests a golden checkpoint")
+	}
+}
+
+func TestRenderLXCPersistentFixture(t *testing.T) {
+	t.Setenv(sandboxClassEnv, "lxc")
+	templates := renderTemplates(t, "internal/e2e/fixtures/probe/probe-lxc-template.yaml.tmpl", map[string]string{"${STORAGE_CLASS}": "csi-hostpath-sc"})
+	template := templates[0]
+	if template.GetSnapshotConfig().GetGoldenSnapshotConfig().GetMode() != ateapi.GoldenSnapshotMode_GOLDEN_SNAPSHOT_MODE_DISABLED {
+		t.Fatal("LXC persistence fixture requests a checkpoint")
+	}
+	var found bool
+	for _, v := range template.GetVolumes() {
+		if v.GetName() == "persistent" {
+			found = true
+			if v.GetExternal().GetTemplate().GetStorageClassName() != "csi-hostpath-sc" {
+				t.Fatalf("storage template: %v", v)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("external persistent volume missing")
+	}
+}
+
+func TestLXCPrerequisites(t *testing.T) {
+	for _, tc := range []struct {
+		name, ci, class, image string
+		required, wantErr      bool
+	}{
+		{name: "ordinary unit CI", ci: "true"},
+		{name: "LXC CI requires e2e", ci: "true", class: "lxc", required: true, wantErr: true},
+		{name: "unknown CI value fails closed", ci: "unexpected", class: "lxc", required: true, wantErr: true},
+		{name: "mutable tag", class: "lxc", image: "registry.example/lxc:latest", wantErr: true},
+		{name: "pinned image", class: "lxc", image: "registry.example/lxc@sha256:" + strings.Repeat("a", 64)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("CI", tc.ci)
+			t.Setenv(sandboxClassEnv, tc.class)
+			t.Setenv("E2E_LXC_WORKER_IMAGE", tc.image)
+			if got := runtimeE2ERequired(); got != tc.required {
+				t.Errorf("required = %v, want %v", got, tc.required)
+			}
+			if tc.class == "lxc" {
+				_, err := lxcWorkerImage()
+				if (err != nil) != tc.wantErr {
+					t.Errorf("image validation = %v", err)
+				}
+			}
+		})
+	}
+}

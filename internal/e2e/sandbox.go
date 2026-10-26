@@ -15,6 +15,8 @@
 package e2e
 
 import (
+	"fmt"
+	"github.com/google/go-containerregistry/pkg/name"
 	"os"
 	"testing"
 	"time"
@@ -23,6 +25,8 @@ import (
 // SandboxClassMicroVM is the kata + cloud-hypervisor runtime, spelled as the
 // WorkerPool spec.sandboxClasses[].name spells it.
 const SandboxClassMicroVM = "microvm"
+
+const SandboxClassLXC = "lxc"
 
 // sandboxClassEnv selects which runtime's fixtures the suites build actors
 // from. Unset means gVisor: the default every runtime-agnostic suite ran
@@ -37,6 +41,8 @@ func SandboxClass() string { return os.Getenv(sandboxClassEnv) }
 // IsMicroVM reports whether the suites are pointed at the micro-VM fixtures.
 // Assertions that only hold for one runtime gate on this.
 func IsMicroVM() bool { return SandboxClass() == SandboxClassMicroVM }
+
+func IsLXC() bool { return SandboxClass() == SandboxClassLXC }
 
 // Fixture identifies an installed WorkerPool + ActorTemplate pair (both carry
 // the same name) that suites either create Actors from directly or copy the
@@ -127,6 +133,9 @@ func EgressFixture() Fixture {
 // fail the next one's apply. ${FIXTURE_SUFFIX} does the same job inside the
 // fixture manifests.
 func FixtureName(base string) string {
+	if IsLXC() {
+		return base + "-lxc"
+	}
 	if IsMicroVM() {
 		return base + "-" + SandboxClassMicroVM
 	}
@@ -188,6 +197,12 @@ func fixtureSubstitutions(bucket, name string) (inline, blocks map[string]string
 		// Off unless the caller opts in; see WithTrustBundle.
 		"${TEMPLATE_TRUST_BUNDLE}": "",
 	}
+	if IsLXC() {
+		inline["${WORKER_IMAGE}"] = os.Getenv("E2E_LXC_WORKER_IMAGE")
+		inline["${FIXTURE_SUFFIX}"] = "-lxc-" + name
+		blocks["${WORKERPOOL_RUNTIME}"] = "  sandboxClasses:\n  - name: lxc\n    configRef:\n      name: lxc-image"
+		return inline, blocks
+	}
 	if !IsMicroVM() {
 		return inline, blocks
 	}
@@ -196,4 +211,18 @@ func fixtureSubstitutions(bucket, name string) (inline, blocks map[string]string
 	inline["${FIXTURE_SUFFIX}"] = "-" + SandboxClassMicroVM + "-" + name
 	blocks["${WORKERPOOL_RUNTIME}"] = "  sandboxClasses:\n  - name: microvm"
 	return inline, blocks
+}
+
+// runtimeE2ERequired prevents an explicitly selected LXC CI lane from doing no work.
+func runtimeE2ERequired() bool {
+	ci := os.Getenv("CI")
+	return IsLXC() && ci != "" && ci != "false"
+}
+
+func lxcWorkerImage() (string, error) {
+	image := os.Getenv("E2E_LXC_WORKER_IMAGE")
+	if _, err := name.NewDigest(image); err != nil {
+		return "", fmt.Errorf("E2E_LXC_WORKER_IMAGE must name a digest-pinned image: %w", err)
+	}
+	return image, nil
 }

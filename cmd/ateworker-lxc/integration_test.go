@@ -22,7 +22,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
 	"math/big"
 	"os"
@@ -32,7 +31,6 @@ import (
 	"testing"
 	"time"
 
-	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"go.ate.dev/substrate/internal/actorlog"
 	"go.ate.dev/substrate/internal/ateworker/actornet"
 	"go.ate.dev/substrate/internal/ateworker/cgroup"
@@ -115,14 +113,7 @@ func integrationRequest(t *testing.T, uid string) *ateworkerpb.RunWorkloadReques
 	if out, err := exec.CommandContext(t.Context(), "cp", "-a", "/opt/lxc-test-guest", filepath.Join(bundle, "rootfs")).CombinedOutput(); err != nil {
 		t.Fatalf("copy rootfs: %v: %s", err, out)
 	}
-	spec := &specs.Spec{Root: &specs.Root{Path: "rootfs"}, Process: &specs.Process{Args: []string{"/sbin/init"}, Cwd: "/", Env: []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin"}}, Mounts: []specs.Mount{{Type: "proc", Source: "proc", Destination: "/proc"}, {Type: "tmpfs", Source: "tmpfs", Destination: "/dev"}, {Type: "sysfs", Source: "sysfs", Destination: "/sys"}}}
-	data, err := json.Marshal(spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(bundle, "config.json"), data, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	req.Spec.Containers[0].ContainerSpec = &ateworkerpb.ContainerSpec{Args: []string{"/sbin/init"}, Env: []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin"}}
 	req.Resources = &ateworkerpb.ResourceRequirements{Limits: &ateworkerpb.Resources{CpuMillicores: 1000, MemoryBytes: 512 << 20}}
 	return req
 }
@@ -151,30 +142,14 @@ func TestLXCIntegration(t *testing.T) {
 				if err := imagecache.WriteSpec(bundle, &imagecache.OverlaySpec{Layers: []string{layer}, ExtraDirs: []string{"/data"}}); err != nil {
 					t.Fatal(err)
 				}
-				volume := filepath.Join(req.ActorDirs.RootDir, "volume")
+				volume := filepath.Join(req.ActorDirs.SystemInfoVolumeRootsDir, "data")
 				if err := os.MkdirAll(volume, 0o700); err != nil {
 					t.Fatal(err)
 				}
 				if err := os.WriteFile(filepath.Join(volume, "marker"), []byte("actor-volume"), 0o600); err != nil {
 					t.Fatal(err)
 				}
-				path := filepath.Join(bundle, "config.json")
-				data, err := os.ReadFile(path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				var spec specs.Spec
-				if err := json.Unmarshal(data, &spec); err != nil {
-					t.Fatal(err)
-				}
-				spec.Mounts = append(spec.Mounts, specs.Mount{Type: "bind", Source: volume, Destination: "/data", Options: []string{"bind", "ro"}})
-				data, err = json.Marshal(spec)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(path, data, 0o600); err != nil {
-					t.Fatal(err)
-				}
+				req.Spec.Containers[0].SystemInfoVolumeMounts = []*ateworkerpb.VolumeMount{{Name: "data", MountPath: "/data"}}
 			}
 
 			tunnel := integrationTunnel(t)
@@ -194,25 +169,9 @@ func TestLXCIntegration(t *testing.T) {
 			})
 			worker.epoch.Store(9)
 			if scenario == "partial-start" {
-				path := filepath.Join(req.ActorDirs.OciBundleDir, "main", "config.json")
-				data, err := os.ReadFile(path)
-				if err != nil {
-					t.Fatal(err)
-				}
-				var spec specs.Spec
-				if err := json.Unmarshal(data, &spec); err != nil {
-					t.Fatal(err)
-				}
-				spec.Process.Args = []string{"/missing-executable"}
-				data, err = json.Marshal(spec)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(path, data, 0o600); err != nil {
-					t.Fatal(err)
-				}
+				req.Spec.Containers[0].ContainerSpec.Args = []string{"/missing-executable"}
 				req.Spec.Containers[0].WakeupProbe = &ateworkerpb.WakeupProbe{HttpGet: &ateworkerpb.HttpGetAction{Path: "/", Port: 8080}, TimeoutSeconds: 2}
-				_, err = worker.RunWorkload(t.Context(), req)
+				_, err := worker.RunWorkload(t.Context(), req)
 				if err == nil {
 					t.Fatal("bad executable accepted")
 				}

@@ -25,6 +25,8 @@ import (
 
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"go.ate.dev/substrate/internal/nodepath"
+	"go.ate.dev/substrate/internal/ocispec"
+	"go.ate.dev/substrate/internal/proto/ateworkerpb"
 )
 
 // lxcConfig keeps actor argv and env in the OCI spec, never in host config lines.
@@ -100,4 +102,15 @@ func limitValue(value int64) string {
 		return "max"
 	}
 	return strconv.FormatInt(value, 10)
+}
+
+func prepareOCISpec(uid string, dirs *ateworkerpb.ActorDirs, container *ateworkerpb.Container) (*specs.Spec, error) {
+	if container.ContainerSpec == nil || len(container.ContainerSpec.Args) == 0 {
+		return nil, fmt.Errorf("container %q requires resolved process args", container.Name)
+	}
+	spec := ocispec.Build(ocispec.Options{ActorUID: uid, ActorDirs: dirs, Container: container})
+	if err := ocispec.Save(filepath.Join(dirs.OciBundleDir, container.Name), spec); err != nil {
+		return nil, err
+	}
+	return spec, nil
 }

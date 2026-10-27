@@ -73,5 +73,17 @@ func PreflightChecks() error {
 		}
 	}
 
+	if IsLXC() {
+		if _, err := lxcWorkerImage(); err != nil {
+			return err
+		}
+		config, err := clients.SubstrateK8s.AteV1().SandboxConfigs().Get(ctx, "lxc-image", metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("LXC SandboxConfig/lxc-image is required: %w", err)
+		}
+		if string(config.Spec.SandboxClass) != "lxc" {
+			return fmt.Errorf("SandboxConfig/lxc-image is for %q, want lxc", config.Spec.SandboxClass)
+		}
+	}
 	return nil
 }

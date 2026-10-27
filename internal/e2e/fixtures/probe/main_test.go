@@ -486,3 +486,28 @@ func TestRestoreFetchRetriesOnNextProbe(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+// Disk markers cannot prove memory survived an unsupported suspend.
+func TestMemoryState(t *testing.T) {
+	handler := newMemoryStateHandler()
+	for _, method := range []string{http.MethodPost, http.MethodGet} {
+		out := httptest.NewRecorder()
+		handler(out, httptest.NewRequest(method, "/memory", nil))
+		var state map[string]string
+		if err := json.Unmarshal(out.Body.Bytes(), &state); err != nil {
+			t.Fatal(err)
+		}
+		if state["value"] != "1" {
+			t.Fatalf("memory state after %s = %v", method, state)
+		}
+	}
+	fresh := httptest.NewRecorder()
+	newMemoryStateHandler()(fresh, httptest.NewRequest(http.MethodGet, "/memory", nil))
+	var state map[string]string
+	if err := json.Unmarshal(fresh.Body.Bytes(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if state["value"] != "0" {
+		t.Fatalf("new process retained old memory: %v", state)
+	}
+}

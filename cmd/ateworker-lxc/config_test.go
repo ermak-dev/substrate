@@ -17,6 +17,8 @@
 package main
 
 import (
+	"encoding/json"
+	"go.ate.dev/substrate/internal/proto/ateworkerpb"
 	"os"
 	"path/filepath"
 	"strings"
@@ -93,5 +95,38 @@ func TestRecoverIncompleteRecord(t *testing.T) {
 				t.Fatalf("incomplete state remains: %v", err)
 			}
 		})
+	}
+}
+
+// Atelet supplies ContainerSpec and rootfs layers, not an OCI config.json.
+func TestPrepareOCISpecFromWorkerRequest(t *testing.T) {
+	root := t.TempDir()
+	dirs := &ateworkerpb.ActorDirs{OciBundleDir: root, SystemInfoVolumeRootsDir: "/actor/system-info"}
+	if err := os.Mkdir(filepath.Join(root, "probe"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	container := &ateworkerpb.Container{Name: "probe", ContainerSpec: &ateworkerpb.ContainerSpec{Args: []string{"/ko-app/probe"}, Env: []string{"TOKEN=opaque\nvalue"}}, SystemInfoVolumeMounts: []*ateworkerpb.VolumeMount{{Name: "identity", MountPath: "/run/ate"}}}
+	if _, err := prepareOCISpec(actorUID, dirs, container); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "probe", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var spec specs.Spec
+	if err := json.Unmarshal(data, &spec); err != nil {
+		t.Fatal(err)
+	}
+	if spec.Process.Args[0] != "/ko-app/probe" || spec.Process.Env[0] != "TOKEN=opaque\nvalue" {
+		t.Fatalf("process spec changed: %v", spec.Process)
+	}
+	var found bool
+	for _, mount := range spec.Mounts {
+		if mount.Destination == "/run/ate" && mount.Source == "/actor/system-info/identity" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("system-info mount not built from request")
 	}
 }

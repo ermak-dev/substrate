@@ -22,10 +22,11 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"go.ate.dev/substrate/internal/testcert"
 )
 
 func testCertPEM(t *testing.T) []byte {
@@ -57,9 +58,7 @@ func TestServerTLSConfigRejectsUnreadableCACerts(t *testing.T) {
 // by the new CA, which a long benchmark would read as a data plane outage.
 func TestServerTLSConfigReloadsCACertsWithoutRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "trust-bundle.pem")
-	if err := os.WriteFile(path, testCertPEM(t), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	testcert.ReplaceFile(t, path, testCertPEM(t))
 	cfg, err := serverTLSConfig("/nonexistent-cred-bundle.pem", path)
 	if err != nil {
 		t.Fatalf("serverTLSConfig() error = %v", err)
@@ -71,9 +70,7 @@ func TestServerTLSConfigReloadsCACertsWithoutRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetConfigForClient() first call error = %v", err)
 	}
-	if err := os.WriteFile(path, testCertPEM(t), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	testcert.ReplaceFile(t, path, testCertPEM(t))
 	after, err := cfg.GetConfigForClient(nil)
 	if err != nil {
 		t.Fatalf("GetConfigForClient() second call error = %v", err)

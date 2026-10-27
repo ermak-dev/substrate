@@ -128,7 +128,7 @@ type Server struct {
 // service.name their resource declares — which the OTEL_* environment can
 // override out from under a worker; see sourceGate for what that looks like.
 // Mirrors the serviceName constants in
-// cmd/ateworker-gvisor and cmd/ateworker-microvm, which are package main and cannot be
+// cmd/ateworker-gvisor, cmd/ateworker-microvm and cmd/ateworker-lxc, which cannot be
 // imported; TestWorkerServicesMatchTheWorkerBinaries guards the duplication.
 //
 // This allowlist is a protocol contract rather than a security boundary:
@@ -140,6 +140,7 @@ type Server struct {
 var workerServices = map[string]bool{
 	"ateworker-gvisor":  true,
 	"ateworker-microvm": true,
+	"ateworker-lxc":     true,
 }
 
 // sourceGate applies the workerServices allowlist and reports the first

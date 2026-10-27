@@ -86,6 +86,7 @@ spec:
                 enum:
                 - gvisor
                 - microvm
+                - lxc
                 type: string
               versions:
                 description: versions are the sandbox versions this config offers,
@@ -131,9 +132,10 @@ spec:
                         asset names are interpreted by the sandbox backend: gVisor expects a
                         "gvisor" asset (the release's gvisor.tar.zstd, which atelet extracts so
                         the gvisor-bin/ helpers sit next to runsc); a micro-VM backend expects
-                        several (e.g. "cloud-hypervisor", "kata-kernel", "kata-image"). The
-                        schema is intentionally generic; per-class requirements are enforced by
-                        a ValidatingAdmissionPolicy.
+                        several (e.g. "cloud-hypervisor", "kata-kernel", "kata-image").
+                        LXC ships in the worker image and requires an empty asset map for each
+                        supported architecture. A ValidatingAdmissionPolicy enforces per-class
+                        requirements.
                       type: object
                     name:
                       description: |-

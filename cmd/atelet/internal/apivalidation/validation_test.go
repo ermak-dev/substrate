@@ -1069,6 +1069,9 @@ func TestValidateSetWorkerSandboxRuntimesRequest(t *testing.T) {
 		name: "valid",
 		obj:  withClass(testClass()),
 	}, {
+		name: "valid LXC runtime report",
+		obj:  withClass(&ateletpb.WorkerSandboxClass{SandboxClass: "lxc", DefaultRuntime: testRuntime(testCompat())}),
+	}, {
 		name: "valid with restorable runtimes",
 		obj:  withRestorable(testCompat()),
 	}, {

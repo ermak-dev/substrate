@@ -118,10 +118,11 @@ type WorkerPoolSandboxClass struct {
 	// name selects the sandbox runtime family, which drives the worker pod
 	// shape (KVM/vhost device mounts and node placement). The concrete binary
 	// is still selected by WorkerImage. The sandbox binaries themselves come
-	// from the SandboxConfig referenced by ConfigRef (or the class default).
+	// from the SandboxConfig referenced by ConfigRef (or the class default),
+	// except LXC, whose userspace is included in WorkerImage.
 	//
 	// +required
-	// +kubebuilder:validation:Enum=gvisor;microvm
+	// +kubebuilder:validation:Enum=gvisor;microvm;lxc
 	Name SandboxClass `json:"name,omitempty"`
 
 	// configRef names a cluster-scoped SandboxConfig for this sandbox class.
@@ -206,7 +207,7 @@ type WorkerPoolSandboxClassStatus struct {
 	// name is the sandbox runtime family.
 	//
 	// +required
-	// +kubebuilder:validation:Enum=gvisor;microvm
+	// +kubebuilder:validation:Enum=gvisor;microvm;lxc
 	Name SandboxClass `json:"name,omitempty"`
 
 	// configRef names the cluster-scoped SandboxConfig in use. That is the

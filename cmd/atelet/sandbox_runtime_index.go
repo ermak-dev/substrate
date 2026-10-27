@@ -33,9 +33,9 @@ import (
 // runtimeIndex is this node's view of the sandbox runtimes its workers
 // advertise: what the worker sandbox syncer wrote into each worker's
 // versions file, kept with the asset records the hashes were computed from.
-// Run and Restore resolve the runtime an actor is to use here, by the hash
-// the worker registered with, so an actor runs exactly the binaries the
-// control plane placed it for.
+// Run and Restore resolve external runtime assets here by the hash the worker
+// registered with. LXC uses no external assets; its worker image selects its
+// userspace.
 //
 // Two maps answer two questions. runtimes, by hash, serves the hot path and
 // never forgets an entry: a request may carry a hash a worker advertised

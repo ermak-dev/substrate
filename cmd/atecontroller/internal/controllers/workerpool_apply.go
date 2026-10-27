@@ -402,9 +402,14 @@ var workerMicroVMCapabilities = slices.Concat(workerGvisorCapabilities, []corev1
 	"FSETID", "DAC_READ_SEARCH",
 })
 
+// workerLXCCapabilities adds the capabilities needed by systemd and nested Docker.
+var workerLXCCapabilities = slices.Concat(workerGvisorCapabilities, []corev1.Capability{
+	"NET_BIND_SERVICE", "SYS_RESOURCE",
+})
+
 // workerSecurityContext returns the worker container security context for a sandbox
-// class. Neither class runs privileged; they differ in their capability set.
-// Both declare seccomp Unconfined because their sandbox child pivot_root()s,
+// class. No class runs privileged; they differ in their capability set.
+// They declare seccomp Unconfined because their sandbox children pivot_root,
 // which the default profile denies. An empty class defaults to gVisor.
 func workerSecurityContext(class atev1.SandboxClass) *corev1ac.SecurityContextApplyConfiguration {
 	// Both runtimes mount inside the worker — runsc pivots root and the worker
@@ -421,6 +426,11 @@ func workerSecurityContext(class atev1.SandboxClass) *corev1ac.SecurityContextAp
 		WithAppArmorProfile(corev1ac.AppArmorProfile().
 			WithType(corev1.AppArmorProfileTypeUnconfined))
 
+	if class == atev1.SandboxClassLXC {
+		return sc.
+			WithCapabilities(corev1ac.Capabilities().WithDrop("ALL").WithAdd(workerLXCCapabilities...)).
+			WithSeccompProfile(corev1ac.SeccompProfile().WithType(corev1.SeccompProfileTypeUnconfined))
+	}
 	if class == atev1.SandboxClassMicroVM {
 		// Give up the default seccomp profile so virtiofsd keeps its own sandbox,
 		// which pivot_root()s — a syscall the profile denies whatever capabilities

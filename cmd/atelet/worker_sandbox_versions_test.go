@@ -889,3 +889,43 @@ func TestSyncPodAdvertisesWhatItWrote(t *testing.T) {
 		}
 	})
 }
+
+// LXC ships its runtime in the worker image and has no restore runtimes.
+func TestPlanAndBuildLXC(t *testing.T) {
+	pool := resolvedPoolOf("lxc", "lxc-pool", "lxc-config")
+	cfg := &atev1.SandboxConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "lxc-config"},
+		Spec: atev1.SandboxConfigSpec{SandboxClass: "lxc", DefaultVersion: "v1",
+			Versions: []atev1.SandboxVersionConfig{{Name: "v1", Assets: map[string]map[string]atev1.AssetFile{runtime.GOARCH: {}}}}},
+	}
+	for _, tc := range []struct {
+		name    string
+		assets  map[string]map[string]atev1.AssetFile
+		wantErr bool
+	}{
+		{"image-contained runtime", cfg.Spec.Versions[0].Assets, false},
+		{"missing architecture", nil, true},
+		{"foreign assets", map[string]map[string]atev1.AssetFile{runtime.GOARCH: {"gvisor": {URL: "gs://bucket/runsc", SHA256: "foreign"}}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := cfg.DeepCopy()
+			config.Spec.Versions[0].Assets = tc.assets
+			s := newTestSyncer(t, pool, config)
+			got, err := planAndBuild(s, workerPod("lxc-worker", "lxc-pool"))
+			if tc.wantErr {
+				if !errors.Is(err, errPermanent) {
+					t.Fatalf("error = %v, want permanent failure", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := &sandboxAssetsRecord{SandboxClass: "lxc", Assets: map[string]assetEntry{}}
+			want := classFile("lxc", sandboxruntimes.Attributes{hardware.AttrArchitecture: runtime.GOARCH, hardware.AttrSandboxBundleHash: bundleHash(rec)})
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Errorf("runtime file (-want +got):\n%s", diff)
+			}
+		})
+	}
+}

@@ -32,6 +32,8 @@ func TestValid(t *testing.T) {
 			class: MicroVM,
 			want:  true,
 		},
+		{name: "lxc", class: "lxc", want: true},
+		{name: "lxc case sensitive", class: "LXC", want: false},
 		{
 			name:  "empty",
 			class: "",

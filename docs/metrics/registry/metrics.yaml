@@ -262,6 +262,10 @@ groups:
               stability: development
               value: microvm
               brief: A microVM sandbox.
+            - id: lxc
+              stability: development
+              value: lxc
+              brief: An experimental shared-kernel LXC container.
             - id: unknown
               stability: development
               value: unknown

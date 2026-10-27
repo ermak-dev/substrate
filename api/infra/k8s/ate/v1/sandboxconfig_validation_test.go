@@ -154,6 +154,18 @@ func TestSandboxConfigValidation(t *testing.T) {
 		sc:      sandboxConfig("ok-microvm", "microvm", map[string]map[string]AssetFile{"amd64": microVMAssets()}),
 		wantErr: false,
 	}, {
+		name: "valid lxc with image-contained runtime",
+		sc:   sandboxConfig("ok-lxc", "lxc", map[string]map[string]AssetFile{"amd64": {}, "arm64": {}}),
+	}, {
+		name:    "lxc requires explicit architectures",
+		sc:      sandboxConfig("bad-lxc-no-arch", "lxc", nil),
+		wantErr: true,
+		errMsg:  "lxc SandboxConfig",
+	}, {
+		name:    "lxc rejects external runtime assets",
+		sc:      sandboxConfig("bad-lxc-assets", "lxc", gvisorAssets()),
+		wantErr: true,
+		errMsg:  "lxc SandboxConfig"}, {
 		name:    "valid microvm arm64 asset set",
 		sc:      sandboxConfig("ok-microvm-arm64", "microvm", map[string]map[string]AssetFile{"arm64": microVMAssets()}),
 		wantErr: false,

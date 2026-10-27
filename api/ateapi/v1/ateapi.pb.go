@@ -7641,7 +7641,7 @@ type WorkerSandboxClass struct {
 	//
 	// +k8s:required
 	// +k8s:maxLength=63
-	// +k8s:customValidation # gvisor or microvm
+	// +k8s:customValidation # gvisor, microvm, or lxc
 	SandboxClass string `protobuf:"bytes,1,opt,name=sandbox_class,json=sandboxClass,proto3" json:"sandbox_class,omitempty"`
 	// Runtime new and cold-booted actors of this class start under. Snapshots
 	// matching its version can also warm-boot on this worker.
@@ -7773,7 +7773,7 @@ type ActorSandboxRuntime struct {
 	//
 	// +k8s:required
 	// +k8s:maxLength=63
-	// +k8s:customValidation # gvisor or microvm
+	// +k8s:customValidation # gvisor, microvm, or lxc
 	SandboxClass string `protobuf:"bytes,1,opt,name=sandbox_class,json=sandboxClass,proto3" json:"sandbox_class,omitempty"`
 	// Compatibility version of the runtime. A snapshot stamped with it can
 	// warm-boot on a worker whose runtime of this class matches it.

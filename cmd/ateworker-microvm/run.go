@@ -29,7 +29,7 @@ import (
 	"syscall"
 	"time"
 
-	"go.ate.dev/substrate/cmd/ateworker-microvm/internal/child"
+	"go.ate.dev/substrate/internal/ateworker/child"
 	"go.ate.dev/substrate/internal/workerstats"
 
 	"go.ate.dev/substrate/internal/ateworker/actornet"

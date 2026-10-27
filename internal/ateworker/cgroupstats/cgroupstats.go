@@ -14,10 +14,6 @@
 
 // Package cgroupstats reads resource usage out of a cgroup v2 directory.
 //
-// The gVisor ateworker uses it to answer ateworkerpb.Worker/GetWorkloadStats: the sentry
-// hosts the whole sandbox in one host process, so the sandbox's cgroup leaf is
-// where the workload's memory and CPU actually show up.
-//
 // Every read is scoped to a caller-supplied directory rather than a hardcoded
 // /sys/fs/cgroup path, which keeps the parsing testable from a fixture tree
 // without root or a live sandbox. The package deliberately does not know what a

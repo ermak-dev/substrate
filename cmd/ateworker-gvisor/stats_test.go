@@ -32,8 +32,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/testing/protocmp"
 
-	"go.ate.dev/substrate/cmd/ateworker-gvisor/internal/cgroupstats"
 	"go.ate.dev/substrate/internal/apierror"
+	"go.ate.dev/substrate/internal/ateworker/cgroupstats"
 	"go.ate.dev/substrate/internal/ocispec"
 	"go.ate.dev/substrate/internal/proto/ateworkerpb"
 	"go.ate.dev/substrate/internal/resources"

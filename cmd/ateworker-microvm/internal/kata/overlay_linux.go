@@ -39,8 +39,8 @@ import (
 	"time"
 
 	specs "github.com/opencontainers/runtime-spec/specs-go"
-	"go.ate.dev/substrate/cmd/ateworker-microvm/internal/child"
 	"go.ate.dev/substrate/cmd/ateworker-microvm/internal/third_party/kata/agentpb"
+	"go.ate.dev/substrate/internal/ateworker/child"
 	"go.ate.dev/substrate/internal/ocispec"
 	"golang.org/x/sys/unix"
 )

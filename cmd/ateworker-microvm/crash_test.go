@@ -22,8 +22,8 @@ import (
 	"testing"
 	"time"
 
-	"go.ate.dev/substrate/cmd/ateworker-microvm/internal/child"
 	"go.ate.dev/substrate/internal/actorlock"
+	"go.ate.dev/substrate/internal/ateworker/child"
 	"go.ate.dev/substrate/internal/resources"
 )
 

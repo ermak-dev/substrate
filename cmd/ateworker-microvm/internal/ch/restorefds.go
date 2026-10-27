@@ -30,7 +30,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"go.ate.dev/substrate/cmd/ateworker-microvm/internal/child"
+	"go.ate.dev/substrate/internal/ateworker/child"
 )
 
 // RestoredNet identifies one fd-backed network device in a snapshot and the

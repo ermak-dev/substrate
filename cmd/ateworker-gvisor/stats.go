@@ -25,9 +25,9 @@ import (
 	"time"
 
 	atev1 "go.ate.dev/substrate/api/infra/k8s/ate/v1"
-	"go.ate.dev/substrate/cmd/ateworker-gvisor/internal/cgroupstats"
 	"go.ate.dev/substrate/internal/apierror"
 	"go.ate.dev/substrate/internal/ateattr"
+	"go.ate.dev/substrate/internal/ateworker/cgroupstats"
 	"go.ate.dev/substrate/internal/ateworkervalidation"
 	"go.ate.dev/substrate/internal/ocispec"
 	"go.ate.dev/substrate/internal/proto/ateworkerpb"

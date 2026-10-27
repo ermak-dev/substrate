@@ -1,13 +1,33 @@
 # Experimental LXC worker
 
 This worker registers class `lxc` and its runtime attributes through the existing
-atelet protocol. It reports **zero actor capacity**. Run, checkpoint, restore,
-and terminate are unimplemented. Workload lifecycle support is a separate change.
+atelet protocol. It runs one actor per worker, with one LXC container per OCI
+application container. Checkpoint and restore return `Unimplemented`; suspend
+must be rejected by the control plane before it changes a live LXC actor.
+
+The worker composes the OCI bundle rootfs with `imagecache`, joins the actor's
+private veth network, and activates ingress after the configured wakeup probes.
+A small PID 1 helper applies OCI argv, environment, cwd and user inside the
+container, then uses `exec` to replace itself. Systemd remains PID 1. Actor
+environment values never enter the host LXC configuration or host process env.
+
+Termination stops LXC, kills remaining actor-cgroup processes, closes atunnel
+listeners and namespaces, unmounts bundle overlays, and removes runtime state.
+A failed cleanup retains the worker's slot. Startup cleans recorded actors
+before registration and reports them crashed. Unexpected monitor exit also
+cleans the actor and reports its UID through WorkerSupport.
+
+Stats read the actor's cgroup, including its LXC monitors and all containers.
+Samples carry actor and template attribution and a per-activation epoch. Initial,
+periodic and final usage records use the existing `ate.actor.usage_sampled`
+stream.
 
 LXC shares the node kernel. Its broad capabilities and unconfined AppArmor and
 seccomp profiles are unsuitable for hostile multi-tenancy. These permissions
 apply only to `lxc`; the gVisor and microVM pod configurations are unchanged.
-No KVM device, host network, or host PID namespace is needed.
+No KVM device, host network, or host PID namespace is needed. LXC does not
+apply the OCI capability allowlist: nested systemd and Docker need the broader
+LXC capability set. The worker's explicit pod capabilities still bound it.
 
 ## Build
 
@@ -38,3 +58,23 @@ compatibility. The worker image digest identifies its userspace.
 Suspend must be protected by the checkpoint precondition before enabling this
 class. LXC templates must use `GOLDEN_SNAPSHOT_MODE_DISABLED` and select the LXC
 pool through worker selectors. There is no memory checkpoint or restore path.
+
+## Verification
+
+Unit tests run with the repository suite. The physical backend also has isolated
+Docker tests:
+
+```sh
+cmd/ateworker-lxc/testdata/run.sh
+```
+
+The script builds the race-enabled test binary in a pinned Linux Go image, so
+it does not require a Linux C cross-compiler on macOS. It uses a private cgroup
+namespace and the LXC capability set, without
+privileged mode or host mounts. Actor files use container-local tmpfs because
+Docker's overlay root cannot be used as an overlay upperdir. The integration
+build tag is `lxc_integration`; selecting it outside this harness fails closed.
+The tests run systemd and verify terminate, crash reporting, partial startup,
+recovery, overlay rootfs and a read-only volume with `-count=3 -shuffle=on`.
+They do not exercise Kubernetes registration, PVE placement or the full gateway
+path. Those require runtime e2e coverage.

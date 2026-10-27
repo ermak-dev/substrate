@@ -27,7 +27,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// The registration-only worker must never admit actors before lifecycle support.
+// The LXC worker advertises exactly one actor slot.
 func TestRegistrationConfig(t *testing.T) {
 	fs := pflag.NewFlagSet("lxc", pflag.ContinueOnError)
 	o := newOptions(fs)
@@ -36,7 +36,7 @@ func TestRegistrationConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := o.reportConfig()
-	if cfg.Actors != 0 || cfg.SandboxClass != "lxc" {
+	if cfg.Actors != 1 || cfg.SandboxClass != "lxc" {
 		t.Fatalf("unsafe registration: %+v", cfg)
 	}
 	if cfg.RuntimesFile != nodepath.WorkerSandboxRuntimesPath("worker-pod") || cfg.SocketPath != nodepath.WorkerSupportSocket {
@@ -50,19 +50,12 @@ func TestRegistrationConfig(t *testing.T) {
 	}
 }
 
-func TestRegistrationOnlyWorker(t *testing.T) {
-	worker := &registrationWorker{}
-	if _, err := worker.RunWorkload(context.Background(), &ateworkerpb.RunWorkloadRequest{}); status.Code(err) != codes.Unimplemented {
-		t.Fatalf("run error = %v", err)
-	}
+func TestSnapshotsRemainUnsupported(t *testing.T) {
+	worker := &workerService{}
 	if _, err := worker.CheckpointWorkload(context.Background(), &ateworkerpb.CheckpointWorkloadRequest{}); status.Code(err) != codes.Unimplemented {
-		t.Fatalf("checkpoint error = %v", err)
+		t.Fatalf("checkpoint: %v", err)
 	}
 	if _, err := worker.RestoreWorkload(context.Background(), &ateworkerpb.RestoreWorkloadRequest{}); status.Code(err) != codes.Unimplemented {
-		t.Fatalf("restore error = %v", err)
-	}
-	stats, err := worker.GetActiveWorkloadStats(context.Background(), &ateworkerpb.GetActiveWorkloadStatsRequest{})
-	if err != nil || len(stats.GetSamples()) != 0 {
-		t.Fatalf("empty worker stats = %v, %v", stats, err)
+		t.Fatalf("restore: %v", err)
 	}
 }

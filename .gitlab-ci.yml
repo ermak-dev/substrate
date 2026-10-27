@@ -1,0 +1,59 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_OPEN_MERGE_REQUESTS'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+
+stages: [check, infrastructure]
+
+variables:
+  GIT_DEPTH: "0"
+  FF_GIT_URLS_WITHOUT_TOKENS: "true"
+
+.go-check:
+  stage: check
+  tags: [docker, build]
+  timeout: 60 minutes
+  interruptible: true
+
+go-test:
+  extends: .go-check
+  resource_group: substrate-native-go-tests
+  tags: [docker, build]
+  script: [.ci/run.sh test]
+
+go-verify:
+  extends: .go-check
+  tags: [docker, build]
+  script: [.ci/run.sh verify]
+
+go-repeat:
+  extends: .go-check
+  resource_group: substrate-native-go-tests
+  tags: [docker, build]
+  script: [.ci/run.sh repeat]
+
+lxc-e2e:
+  stage: infrastructure
+  tags: [substrate-lxc-e2e]
+  resource_group: substrate-lxc-e2e
+  timeout: 60 minutes
+  rules:
+    - if: '$RUN_LXC_E2E == "true"'
+  script: [.ci/e2e.sh]

@@ -28,6 +28,7 @@ import (
 	"go.ate.dev/substrate/internal/preview"
 	"go.ate.dev/substrate/internal/proto/ateletpb"
 	"go.ate.dev/substrate/internal/resources"
+	"go.ate.dev/substrate/pkg/sandboxclass"
 	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -111,6 +112,13 @@ func (w *ActorWorkflow) SuspendActor(ctx context.Context, actorRef resources.Act
 	// released the worker, so the record names none (#957).
 	if actor.GetStatus().GetState() == ateapi.ActorState_ACTOR_STATE_SUSPENDED {
 		return actor, nil
+	}
+	if runtime := actor.GetStatus().GetWorkerAssignment().GetSandboxRuntime(); runtime != nil {
+		switch class := runtime.GetSandboxClass(); class {
+		case sandboxclass.GVisor, sandboxclass.MicroVM:
+		default:
+			return nil, apierror.FailedPrecondition("Actor %s sandbox class %q does not support checkpoints", actorRef, class)
+		}
 	}
 	var marked *ateapi.Actor
 	if marked, err = w.ensureMarkedSuspending(leaseCtx, actorRef, actor, actorTemplate, mode); err != nil {

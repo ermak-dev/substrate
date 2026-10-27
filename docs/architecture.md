@@ -428,7 +428,7 @@ stateDiagram-v2
     SUSPENDED --> [*] : DeleteActor
 ```
 
-Both synchronous and asynchronous `SuspendActor` pass through `SUSPENDING`,
+For a checkpoint-capable runtime, both synchronous and asynchronous `SuspendActor` pass through `SUSPENDING`,
 leave the actor in `SUSPENDED`, and keep a local copy of the snapshot on the
 node (`locality`). They differ in when the snapshot is uploaded to object
 storage:
@@ -445,6 +445,9 @@ storage:
     during `ResumeActor` when that node has no room), `atelet` deletes the
     local files (uploading the snapshot first if needed), clearing `locality`
     and `status.assignedNode`.
+
+A different named runtime is refused with `FAILED_PRECONDITION` before entering
+`SUSPENDING`. No atelet RPC is sent and the actor keeps its worker and volumes.
 
 `SuspendActor` on a `SUSPENDED` actor returns it as it is, in either mode.
 

@@ -163,6 +163,7 @@ func TestTagActorSnapshot_ActorRepointedToAnotherTemplate(t *testing.T) {
 func TestTagActorSnapshot_Preconditions(t *testing.T) {
 	tests := []struct {
 		name         string
+		runtimeClass string
 		state        ateapi.ActorState
 		withSnapshot bool
 		// builtOnTemplate records the template the seeded snapshot was taken
@@ -177,6 +178,10 @@ func TestTagActorSnapshot_Preconditions(t *testing.T) {
 			withSnapshot:    true,
 			builtOnTemplate: true,
 			wantCode:        codes.FailedPrecondition,
+		},
+		{
+			name: "running actor without checkpoints", runtimeClass: "lxc",
+			state: ateapi.ActorState_ACTOR_STATE_RUNNING, wantCode: codes.FailedPrecondition,
 		},
 		{
 			name:     "the actor holds no external snapshot",
@@ -204,6 +209,14 @@ func TestTagActorSnapshot_Preconditions(t *testing.T) {
 				ActorTemplate: &ateapi.ObjectRef{Atespace: "team-a", Name: "sub-tmpl"},
 				Status:        &ateapi.ActorStatus{State: tt.state},
 			})
+			if tt.runtimeClass != "" {
+				actor = mustUpdateActorStatus(t, ctx, persistence, actor, func(status *ateapi.ActorStatus) {
+					status.AssignedNode = wireTestAssignment().GetNodeName()
+					status.WorkerAssignment = wireTestAssignment()
+					status.WorkerAssignment.SandboxRuntime = &ateapi.ActorSandboxRuntime{SandboxClass: tt.runtimeClass}
+				})
+				seedWireWorker(t, ctx, persistence, assignmentOf(actor))
+			}
 			if tt.withSnapshot {
 				uri := mustActorSnapshotURI(t, template, actor, "actor-1-snapshot")
 				objects.PutSnapshot(t, uri, "manifest.json")
@@ -219,9 +232,16 @@ func TestTagActorSnapshot_Preconditions(t *testing.T) {
 				})
 			}
 
+			before := mustReadActor(t, ctx, persistence, actorRef)
 			_, err := w.TagActorSnapshot(ctx, tagToCreate(actorRef, "v1"))
 			if code := apierror.Code(err); code != tt.wantCode {
 				t.Fatalf("TagActorSnapshot error = %v (code %v), want code %v", err, code, tt.wantCode)
+			}
+			if diff := cmp.Diff(before, mustReadActor(t, ctx, persistence, actorRef), protocmp.Transform()); diff != "" {
+				t.Errorf("rejected tag changed actor (-before +after):\n%s", diff)
+			}
+			if tt.runtimeClass != "" && firstAssignment(t, persistence, wireTestAssignment().GetWorker().GetName()) == nil {
+				t.Error("rejected tag released the worker")
 			}
 			// A rejected create takes the name with it.
 			if _, err := persistence.GetTag(ctx, resources.TagRef{Atespace: "team-a", Name: "v1"}); !errors.Is(err, store.ErrNotFound) {

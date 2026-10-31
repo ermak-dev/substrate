@@ -17,15 +17,51 @@ package main
 import (
 	"bytes"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
 	"go.ate.dev/substrate/internal/atelet"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
 )
 
 const ateletManifest = "../../manifests/ate-install/atelet.yaml"
+
+func TestAteletFilesystemCleanupCapabilities(t *testing.T) {
+	raw, err := os.ReadFile(ateletManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, doc := range bytes.Split(raw, []byte("\n---")) {
+		var ds appsv1.DaemonSet
+		if err := yaml.Unmarshal(doc, &ds); err != nil || ds.Kind != "DaemonSet" || !strings.HasPrefix(ds.Name, "atelet") {
+			continue
+		}
+		for _, container := range ds.Spec.Template.Spec.Containers {
+			if container.Name != "atelet" {
+				continue
+			}
+			sc := container.SecurityContext
+			if sc == nil || sc.Capabilities == nil {
+				t.Fatal("atelet cleanup capability boundary is missing")
+			}
+			if !slices.Equal(sc.Capabilities.Add, []corev1.Capability{"DAC_OVERRIDE", "FOWNER"}) ||
+				!slices.Equal(sc.Capabilities.Drop, []corev1.Capability{"ALL"}) {
+				t.Fatalf("atelet must bypass file modes and sticky ownership only: %+v", sc.Capabilities)
+			}
+			if sc.Privileged != nil && *sc.Privileged {
+				t.Fatal("atelet filesystem cleanup must not require a privileged container")
+			}
+			if sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {
+				t.Fatal("atelet privilege escalation must stay disabled")
+			}
+			return
+		}
+	}
+	t.Fatal("atelet container was not found")
+}
 
 // TestAteletManifestDoesNotExposeHerderOnHostPort pins that the AteomHerder
 // listener is reachable only on atelet's Pod IP. ate-api-server dials the Pod

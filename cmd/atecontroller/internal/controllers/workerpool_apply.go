@@ -270,6 +270,7 @@ func buildDeploymentApplyConfig(wp *atev1.WorkerPool, otel workerOTelSettings, s
 		// and the device-cgroup grant to read the real kernel log.
 		securityContext.Capabilities.WithAdd("FSETID", "KILL", "AUDIT_WRITE", "SYSLOG")
 		addDeviceResourceLimits(containerAC, deviceplugin.ResourceKmsg)
+		containerAC.WithArgs("--actor-pids-limit=4096")
 	}
 	podSpecAC.WithContainers(containerAC)
 	podSpecAC.WithTerminationGracePeriodSeconds(workerTerminationGracePeriodSeconds)

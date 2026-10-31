@@ -46,7 +46,12 @@ adds its device-cgroup allow rule; a capability or hostPath mount alone cannot
 grant device access. A node without the resource cannot schedule this profile.
 It does not add `IPC_LOCK` or permit loading kernel modules.
 The pod remains unprivileged, with the same namespaces, AppArmor and seccomp
-settings. Ordinary LXC pools and other sandbox classes are unchanged.
+settings. The controller passes `--actor-pids-limit=4096` for this profile;
+ordinary LXC workers keep the default actor cgroup limit of 512 tasks. The worker
+accepts limits from 1 through 4096. CPU and memory limits are unchanged.
+The nesting profile requires a rebuilt worker image that accepts this flag.
+Update the pool's worker image before enabling the profile with a new controller.
+Ordinary LXC pools and other sandbox classes receive no new flag.
 
 Any value other than `enabled`, including an empty value, or use on a non-LXC
 pool fails reconciliation before changing the Deployment. Remove the label to

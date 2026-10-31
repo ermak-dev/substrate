@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -61,6 +62,7 @@ type lxcBackend struct {
 	root, executable string
 	logger           *actorlog.ActorLogger
 	tunnel           *atunnel.Tunnel
+	actorPIDsLimit   int
 	mu               sync.Mutex
 	sessions         map[string]*lxcSession
 }
@@ -76,8 +78,17 @@ type lxcSession struct {
 	network   *actornet.SandboxSession
 }
 
-func newLXCBackend(root, executable string, logger *actorlog.ActorLogger, tunnel *atunnel.Tunnel) *lxcBackend {
-	return &lxcBackend{root: root, executable: executable, logger: logger, tunnel: tunnel, sessions: map[string]*lxcSession{}}
+func newLXCBackend(root, executable string, logger *actorlog.ActorLogger, tunnel *atunnel.Tunnel, actorPIDsLimit int) *lxcBackend {
+	return &lxcBackend{root: root, executable: executable, logger: logger, tunnel: tunnel, actorPIDsLimit: actorPIDsLimit, sessions: map[string]*lxcSession{}}
+}
+
+func (b *lxcBackend) writeActorLimits(dir string, memoryBytes int64) error {
+	for name, value := range map[string]string{"memory.max": limitValue(memoryBytes), "pids.max": strconv.Itoa(b.actorPIDsLimit)} {
+		if err := writeCgroupValue(filepath.Join(dir, name), value); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 func (s *lxcSession) Done() <-chan struct{} { return s.done }
 func (s *lxcSession) Exit() string          { s.mu.Lock(); defer s.mu.Unlock(); return s.exit }
@@ -119,10 +130,8 @@ func (b *lxcBackend) Start(ctx context.Context, req *ateworkerpb.RunWorkloadRequ
 		return nil, err
 	}
 	defer func() { retErr = errors.Join(retErr, leaf.Close()) }()
-	for name, value := range map[string]string{"memory.max": limitValue(req.GetResources().GetLimits().GetMemoryBytes()), "pids.max": "512"} {
-		if err := writeCgroupValue(filepath.Join(cgroup.Root, uid, name), value); err != nil {
-			return nil, err
-		}
+	if err := b.writeActorLimits(filepath.Join(cgroup.Root, uid), req.GetResources().GetLimits().GetMemoryBytes()); err != nil {
+		return nil, err
 	}
 	for i, container := range record.Containers {
 		bundle := filepath.Join(req.ActorDirs.OciBundleDir, container.Name)

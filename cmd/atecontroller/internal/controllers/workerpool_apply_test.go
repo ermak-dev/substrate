@@ -502,7 +502,7 @@ func TestWorkerSecurityContextByClass(t *testing.T) {
 	}
 }
 
-// Nesting grants only its capabilities and the read-only kernel log resource.
+// Nesting raises the actor PID limit without changing other pod settings.
 func TestLXCNestingDeployment(t *testing.T) {
 	const label = "ate.dev/lxc-nesting"
 	baseCaps := []corev1.Capability{
@@ -544,6 +544,7 @@ func TestLXCNestingDeployment(t *testing.T) {
 				t.Errorf("kernel log device grant = %q, %v; want one device only for nesting=%v", kernelLog, granted, tt.wantExtra)
 			}
 			if tt.wantExtra {
+				baseline.Spec.Template.Spec.Containers[0].WithArgs("--actor-pids-limit=4096")
 				baseline.Spec.Template.Spec.Containers[0].SecurityContext.Capabilities.WithAdd("FSETID", "KILL", "AUDIT_WRITE", "SYSLOG")
 				baseline.Spec.Template.Spec.Containers[0].Resources.WithLimits(corev1.ResourceList{
 					"ate.dev/kmsg": resource.MustParse("1"),

@@ -58,6 +58,7 @@ type options struct {
 	showVersion                                             bool
 	preview                                                 []string
 	tunnel                                                  *atunnel.Config
+	actorPIDsLimit                                          int
 }
 
 func newOptions(fs *pflag.FlagSet) *options {
@@ -65,6 +66,7 @@ func newOptions(fs *pflag.FlagSet) *options {
 	fs.StringVar(&o.podUID, "pod-uid", "", "The UID of the current pod")
 	fs.StringVar(&o.podIPs, "pod-ips", "", "The comma-separated IPs of the current pod")
 	fs.StringVar(&o.logLevel, "log-level", "info", "Minimum log level: debug, info, warn, or error.")
+	fs.IntVar(&o.actorPIDsLimit, "actor-pids-limit", 512, "Maximum tasks in the actor cgroup (1-4096).")
 	fs.BoolVar(&o.showVersion, "version", false, "Print version and exit.")
 	fs.StringSliceVar(&o.preview, "preview", nil, "Preview gates to enable.")
 	fs.StringVar(&o.readinessAddress, "readiness-listen-address", "0.0.0.0:8080", "HTTP health and readiness listen address")
@@ -109,6 +111,9 @@ func main() {
 }
 
 func run(ctx context.Context, o *options) error {
+	if o.actorPIDsLimit < 1 || o.actorPIDsLimit > 4096 {
+		return fmt.Errorf("--actor-pids-limit must be between 1 and 4096, got %d", o.actorPIDsLimit)
+	}
 	logWriter := actorlog.NewSyncedWriter(os.Stdout)
 	serverboot.InitLoggerWithWriter(logWriter)
 	if err := serverboot.SetLogLevel(o.logLevel); err != nil {
@@ -168,7 +173,7 @@ func run(ctx context.Context, o *options) error {
 		return err
 	}
 	actorLogger := actorlog.NewActorLogger(logWriter, metadata.OnGCE())
-	backend := newLXCBackend(filepath.Join(nodepath.WorkerPath(o.podUID), "lxc"), executable, actorLogger, tunnel)
+	backend := newLXCBackend(filepath.Join(nodepath.WorkerPath(o.podUID), "lxc"), executable, actorLogger, tunnel, o.actorPIDsLimit)
 	usageStdout := workerstats.NewStdoutHandler(logWriter)
 	defer usageStdout.Close()
 	usage := workerstats.NewUsageEmitter(lp, usageStdout, workerstats.Pool{Namespace: os.Getenv("POD_NAMESPACE"), Name: os.Getenv("WORKER_POOL_NAME")})

@@ -155,7 +155,7 @@ func TestLXCIntegration(t *testing.T) {
 			tunnel := integrationTunnel(t)
 			logger := actorlog.NewActorLogger(actorlog.NewSyncedWriter(os.Stdout), false)
 			root := filepath.Join(nodepath.WorkerPath("integration"), "lxc")
-			backend := newLXCBackend(root, "/usr/local/bin/ateworker-lxc", logger, tunnel)
+			backend := newLXCBackend(root, "/usr/local/bin/ateworker-lxc", logger, tunnel, 512)
 			reporter := &fakeCrashReporter{reported: make(chan crashRecord, 1)}
 			lifetime, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -251,7 +251,7 @@ func TestLXCRecoveryChild(t *testing.T) {
 	req := integrationRequest(t, actorUID)
 	tunnel := integrationTunnel(t)
 	logger := actorlog.NewActorLogger(actorlog.NewSyncedWriter(os.Stdout), false)
-	backend := newLXCBackend(filepath.Join(nodepath.WorkerPath("integration"), "lxc"), "/usr/local/bin/ateworker-lxc", logger, tunnel)
+	backend := newLXCBackend(filepath.Join(nodepath.WorkerPath("integration"), "lxc"), "/usr/local/bin/ateworker-lxc", logger, tunnel, 512)
 	worker := newWorkerService(t.Context(), backend, nil, nil)
 	worker.epoch.Store(9)
 	if _, err := worker.RunWorkload(t.Context(), req); err != nil {
@@ -279,7 +279,7 @@ func testPhysicalRecovery(t *testing.T) {
 	}
 	root := filepath.Join(nodepath.WorkerPath("integration"), "lxc")
 	tunnel := integrationTunnel(t)
-	backend := newLXCBackend(root, "/usr/local/bin/ateworker-lxc", actorlog.NewActorLogger(actorlog.NewSyncedWriter(os.Stdout), false), tunnel)
+	backend := newLXCBackend(root, "/usr/local/bin/ateworker-lxc", actorlog.NewActorLogger(actorlog.NewSyncedWriter(os.Stdout), false), tunnel, 512)
 	actors, err := backend.Recover(t.Context())
 	if err != nil || len(actors) != 1 || actors[0].UID != actorUID {
 		t.Fatalf("recover: %v, %v", actors, err)

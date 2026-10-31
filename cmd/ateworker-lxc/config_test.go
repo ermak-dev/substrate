@@ -28,6 +28,42 @@ import (
 	"go.ate.dev/substrate/internal/nodepath"
 )
 
+// The backend writes the configured actor PID limit without changing memory limits.
+func TestActorCgroupLimits(t *testing.T) {
+	for _, tt := range []struct {
+		name                 string
+		pids                 int
+		memory               int64
+		wantPIDs, wantMemory string
+	}{
+		{"ordinary", 512, 1024, "512", "1024"},
+		{"nesting", 4096, 1024, "4096", "1024"},
+		{"minimum", 1, 0, "1", "max"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, name := range []string{"pids.max", "memory.max"} {
+				if err := os.WriteFile(filepath.Join(dir, name), nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			backend := newLXCBackend(dir, "/worker", nil, nil, tt.pids)
+			if err := backend.writeActorLimits(dir, tt.memory); err != nil {
+				t.Fatal(err)
+			}
+			for name, want := range map[string]string{"pids.max": tt.wantPIDs, "memory.max": tt.wantMemory} {
+				data, err := os.ReadFile(filepath.Join(dir, name))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := strings.TrimSpace(string(data)); got != want {
+					t.Errorf("%s = %q, want %q", name, got, want)
+				}
+			}
+		})
+	}
+}
+
 func TestLXCConfig(t *testing.T) {
 	spec := &specs.Spec{Root: &specs.Root{Path: "rootfs"}, Process: &specs.Process{Args: []string{"/sbin/init", "with spaces"}, Env: []string{"TOKEN=private\nvalue", "LD_PRELOAD=actor-library"}}, Mounts: []specs.Mount{{Type: "bind", Source: "/volumes/with space", Destination: "/data/with space", Options: []string{"bind", "ro"}}}}
 	data, err := lxcConfig(actorUID, "/bundle", ".ate-runtime-test", "/usr/local/bin/ateworker-lxc", spec)
@@ -67,7 +103,7 @@ func TestRecoverRejectsMalformedRecord(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, actorUID, "actor.json"), []byte("not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	backend := newLXCBackend(root, "/worker", nil, nil)
+	backend := newLXCBackend(root, "/worker", nil, nil, 512)
 	if _, err := backend.Recover(t.Context()); err == nil {
 		t.Fatal("malformed recovery state ignored")
 	}
@@ -86,7 +122,7 @@ func TestRecoverIncompleteRecord(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			backend := newLXCBackend(root, "/worker", nil, nil)
+			backend := newLXCBackend(root, "/worker", nil, nil, 512)
 			actors, err := backend.Recover(t.Context())
 			if err != nil || len(actors) != 0 {
 				t.Fatalf("uncommitted startup: %v, %v", actors, err)

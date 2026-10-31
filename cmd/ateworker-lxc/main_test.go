@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/spf13/pflag"
@@ -47,6 +48,50 @@ func TestRegistrationConfig(t *testing.T) {
 	}
 	if cfg.CredentialBundlePath != "worker.pem" || cfg.TrustBundlePath != "trust.pem" || cfg.AteletSPIFFEID != "broker" {
 		t.Fatalf("registration identity: %+v", cfg)
+	}
+}
+
+// The actor PID limit defaults to 512 and supports the bounded nesting profile.
+func TestActorPIDsLimitOption(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"default", nil, "512"},
+		{"minimum", []string{"--actor-pids-limit=1"}, "1"},
+		{"nesting", []string{"--actor-pids-limit=4096"}, "4096"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := pflag.NewFlagSet("lxc", pflag.ContinueOnError)
+			newOptions(fs)
+			if err := fs.Parse(tt.args); err != nil {
+				t.Fatal(err)
+			}
+			flag := fs.Lookup("actor-pids-limit")
+			if flag == nil {
+				t.Fatal("missing --actor-pids-limit; nesting cannot raise the actor PID limit")
+			}
+			if got := flag.Value.String(); got != tt.want {
+				t.Fatalf("actor PID limit = %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestActorPIDsLimitRejectsInvalid(t *testing.T) {
+	for _, value := range []string{"0", "-1", "4097", "2147483647", "max", "invalid", ""} {
+		t.Run(value, func(t *testing.T) {
+			fs := pflag.NewFlagSet("lxc", pflag.ContinueOnError)
+			o := newOptions(fs)
+			err := fs.Parse([]string{"--actor-pids-limit=" + value})
+			if err == nil {
+				err = run(t.Context(), o)
+			}
+			if err == nil || !strings.Contains(err.Error(), "actor-pids-limit") {
+				t.Fatalf("invalid limit %q must fail before worker startup, got %v", value, err)
+			}
+		})
 	}
 }
 

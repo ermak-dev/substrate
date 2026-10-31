@@ -99,6 +99,30 @@ func TestAllocateReturnsOnlyTheRequestedDevice(t *testing.T) {
 	}
 }
 
+func TestKernelLogDeviceIsReadOnly(t *testing.T) {
+	for _, dev := range SandboxDevices {
+		if dev.ResourceName != "ate.dev/kmsg" {
+			continue
+		}
+		if dev.Path != "/dev/kmsg" {
+			t.Fatalf("kernel log device path = %q", dev.Path)
+		}
+		response, err := New(dev).Allocate(t.Context(), &pluginapi.AllocateRequest{
+			ContainerRequests: []*pluginapi.ContainerAllocateRequest{{DevicesIds: []string{"kmsg-0"}}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		devices := response.GetContainerResponses()[0].GetDevices()
+		if len(devices) != 1 || devices[0].GetHostPath() != "/dev/kmsg" ||
+			devices[0].GetContainerPath() != "/dev/kmsg" || devices[0].GetPermissions() != "r" {
+			t.Fatalf("kernel log allocation must grant only read access to /dev/kmsg: %v", devices)
+		}
+		return
+	}
+	t.Fatal("kernel log device is not advertised")
+}
+
 // A node without the device must not advertise the resource, so the scheduler
 // keeps pods that need it off that node.
 func TestAvailableFiltersToPresentDevices(t *testing.T) {

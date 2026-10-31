@@ -54,6 +54,8 @@ const (
 	// ResourceKVM grants /dev/kvm, which the micro-VM runtime needs to create a
 	// VM (cloud-hypervisor fails with EPERM on VmCreate without it).
 	ResourceKVM = "ate.dev/kvm"
+	// ResourceKmsg grants read access to the shared kernel log.
+	ResourceKmsg = "ate.dev/kmsg"
 )
 
 // SandboxDevices are the host devices a sandbox runtime needs a grant for.
@@ -64,6 +66,7 @@ const (
 // default allow-list, so the worker gets it as an ordinary bind mount instead.
 var SandboxDevices = []HostDevice{
 	{ResourceName: ResourceKVM, Path: "/dev/kvm"},
+	{ResourceName: ResourceKmsg, Path: "/dev/kmsg", ReadOnly: true},
 }
 
 // HostDevice is a device node advertised to kubelet under ResourceName.
@@ -74,6 +77,8 @@ type HostDevice struct {
 	// Path is the device node, e.g. "/dev/kvm". It is exposed to the container
 	// at the same path.
 	Path string
+	// ReadOnly prevents writes through the allocated device node.
+	ReadOnly bool
 }
 
 // Present reports whether the device node exists on the node as a character
@@ -271,14 +276,16 @@ func (p *Plugin) Allocate(_ context.Context, req *pluginapi.AllocateRequest) (*p
 	resp := &pluginapi.AllocateResponse{
 		ContainerResponses: make([]*pluginapi.ContainerAllocateResponse, 0, len(req.GetContainerRequests())),
 	}
+	permissions := "rw"
+	if p.dev.ReadOnly {
+		permissions = "r"
+	}
 	for range req.GetContainerRequests() {
 		resp.ContainerResponses = append(resp.ContainerResponses, &pluginapi.ContainerAllocateResponse{
 			Devices: []*pluginapi.DeviceSpec{{
 				HostPath:      p.dev.Path,
 				ContainerPath: p.dev.Path,
-				// Read/write, but not mknod: the container is handed this node,
-				// not the ability to mint new ones.
-				Permissions: "rw",
+				Permissions:   permissions,
 			}},
 		})
 	}

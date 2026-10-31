@@ -502,6 +502,60 @@ func TestWorkerSecurityContextByClass(t *testing.T) {
 	}
 }
 
+// Nesting grants only its capabilities and the read-only kernel log resource.
+func TestLXCNestingDeployment(t *testing.T) {
+	const label = "ate.dev/lxc-nesting"
+	baseCaps := []corev1.Capability{
+		"NET_ADMIN", "SYS_ADMIN", "SYS_CHROOT", "SYS_PTRACE",
+		"SETUID", "SETGID", "SETPCAP", "DAC_OVERRIDE",
+		"FOWNER", "CHOWN", "MKNOD", "NET_RAW", "SETFCAP",
+		"NET_BIND_SERVICE", "SYS_RESOURCE",
+	}
+	for _, tt := range []struct {
+		name      string
+		class     atev1.SandboxClass
+		labels    map[string]string
+		wantExtra bool
+	}{
+		{"ordinary lxc", atev1.SandboxClassLXC, nil, false},
+		{"unrelated label", atev1.SandboxClassLXC, map[string]string{"nesting": "enabled"}, false},
+		{"enabled lxc", atev1.SandboxClassLXC, map[string]string{label: "enabled"}, true},
+		{"default class", "", map[string]string{label: "enabled"}, false},
+		{"gvisor", atev1.SandboxClassGvisor, map[string]string{label: "enabled"}, false},
+		{"microvm", atev1.SandboxClassMicroVM, map[string]string{label: "enabled"}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			wp := testWorkerPoolApplyConfig(nil)
+			wp.Spec.SandboxClasses = []atev1.WorkerPoolSandboxClass{{Name: tt.class}}
+			baseline := buildDeploymentApplyConfig(wp, workerOTelSettings{}, installdefaults.SystemNamespace, installdefaults.AteletServiceAccount, installdefaults.RouterServiceAccount, egresspolicy.DNSEgressPolicyEnforceInAtunnel)
+			wp.Labels = tt.labels
+			got := buildDeploymentApplyConfig(wp, workerOTelSettings{}, installdefaults.SystemNamespace, installdefaults.AteletServiceAccount, installdefaults.RouterServiceAccount, egresspolicy.DNSEgressPolicyEnforceInAtunnel)
+			if tt.class == atev1.SandboxClassLXC {
+				wantCaps := append([]corev1.Capability{}, baseCaps...)
+				if tt.wantExtra {
+					wantCaps = append(wantCaps, "FSETID", "KILL", "AUDIT_WRITE", "SYSLOG")
+				}
+				if diff := cmp.Diff(wantCaps, got.Spec.Template.Spec.Containers[0].SecurityContext.Capabilities.Add); diff != "" {
+					t.Errorf("capabilities mismatch (-want +got):\n%s", diff)
+				}
+			}
+			kernelLog, granted := deviceLimit(got.Spec.Template.Spec.Containers[0], "ate.dev/kmsg")
+			if granted != tt.wantExtra || (granted && kernelLog != "1") {
+				t.Errorf("kernel log device grant = %q, %v; want one device only for nesting=%v", kernelLog, granted, tt.wantExtra)
+			}
+			if tt.wantExtra {
+				baseline.Spec.Template.Spec.Containers[0].SecurityContext.Capabilities.WithAdd("FSETID", "KILL", "AUDIT_WRITE", "SYSLOG")
+				baseline.Spec.Template.Spec.Containers[0].Resources.WithLimits(corev1.ResourceList{
+					"ate.dev/kmsg": resource.MustParse("1"),
+				})
+			}
+			if diff := cmp.Diff(baseline, got); diff != "" {
+				t.Errorf("deployment mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // TestTerminationGracePeriodSeconds asserts the pod's grace period is hardcoded to 3600s.
 func TestTerminationGracePeriodSeconds(t *testing.T) {
 	wp := testWorkerPoolApplyConfig(nil)

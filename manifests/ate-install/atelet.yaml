@@ -254,14 +254,9 @@ spec:
         - --drain-delay=0s
         - --drain-timeout=5m
         - --objectstore-plugin-socket=/run/objectstore-plugin/node.sock
-        # atelet does no mounts, netlink, device, or namespace operations (those
-        # live in the worker pod) — it only reads/writes the
-        # /var/lib/ate hostPath as root. CAP_DAC_OVERRIDE is for one thing:
-        # emptying a directory a non-root actor created in its 0777 durable dir.
-        # It is owned by the actor's uid, typically 0755, so root has no write
-        # access to it and resetActorDirs fails after every checkpoint.
-        # runAsUser is pinned explicitly rather than relying on the base image's
-        # default user.
+        # Workers perform mount, netlink, device and namespace operations.
+        # atelet cleans /var/lib/ate as root. DAC_OVERRIDE bypasses actor file
+        # modes; FOWNER permits unlinking actor-owned files in sticky directories.
         securityContext:
           allowPrivilegeEscalation: false
           runAsUser: 0
@@ -271,6 +266,7 @@ spec:
             - ALL
             add:
             - DAC_OVERRIDE
+            - FOWNER
         # Keep per-node reservations small; omit limits to allow usage to grow
         # with the number of hosted actors.
         resources:

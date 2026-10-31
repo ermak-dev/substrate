@@ -29,6 +29,33 @@ No KVM device, host network, or host PID namespace is needed. LXC does not
 apply the OCI capability allowlist: nested systemd and Docker need the broader
 LXC capability set. The worker's explicit pod capabilities still bound it.
 
+## Nested Docker and kind
+
+Trusted pools can opt into additional worker capabilities with the WorkerPool
+metadata label `ate.dev/lxc-nesting: enabled`. Set it in `metadata.labels`, not
+`spec.template.labels`, where the `ate.dev` domain is reserved. Removing the
+label restores the ordinary LXC profile through a worker Deployment rollout.
+Changing this label rolls the pool's workers; plan for actor eviction.
+
+The profile adds only `FSETID`, `KILL`, `AUDIT_WRITE`, and `SYSLOG` to the ordinary
+LXC capability set. The first three complete Docker's default container
+capabilities in the worker's bounding set. `SYSLOG` is required to read the
+shared kernel log. The profile also requests `ate.dev/kmsg`, which atelet
+advertises where `/dev/kmsg` exists. Kubelet maps that device read-only and
+adds its device-cgroup allow rule; a capability or hostPath mount alone cannot
+grant device access. A node without the resource cannot schedule this profile.
+It does not add `IPC_LOCK` or permit loading kernel modules.
+The pod remains unprivileged, with the same namespaces, AppArmor and seccomp
+settings. Ordinary LXC pools and other sandbox classes are unchanged.
+
+Any value other than `enabled`, including an empty value, or use on a non-LXC
+pool fails reconciliation before changing the Deployment. Remove the label to
+disable the profile. Admission does not validate this metadata label.
+
+The profile does not apply OCI process capability allowlists or configure
+actor-local devpts and Docker storage. Those remain separate runtime and
+workbench concerns.
+
 ## Build
 
 From a checkout with Go and Docker, run:

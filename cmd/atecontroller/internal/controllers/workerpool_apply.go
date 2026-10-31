@@ -96,6 +96,9 @@ type workerOTelSettings struct {
 // workerPoolLabel names the WorkerPool on each of its worker pods.
 const workerPoolLabel = "ate.dev/worker-pool"
 
+// workerLXCNestingLabel opts trusted LXC pools into nested Docker and kind.
+const workerLXCNestingLabel = "ate.dev/lxc-nesting"
+
 const (
 	atunnelIdentityVolume       = "atunnel-identity"
 	atunnelIdentityMountPath    = "/run/podidentity.podcert.ate.dev"
@@ -168,6 +171,7 @@ func buildDeploymentApplyConfig(wp *atev1.WorkerPool, otel workerOTelSettings, s
 	previewArg := "--preview=" + strings.Join(enabledGates(), ",")
 	args = append(args, previewArg)
 
+	securityContext := workerSecurityContext(wp.Spec.DefaultSandboxClass())
 	containerAC := corev1ac.Container().
 		WithName("worker").
 		WithImage(wp.Spec.WorkerImage).
@@ -188,7 +192,7 @@ func buildDeploymentApplyConfig(wp *atev1.WorkerPool, otel workerOTelSettings, s
 			WithHTTPGet(corev1ac.HTTPGetAction().
 				WithPath("/readyz").
 				WithPort(intstr.FromString("readyz")))).
-		WithSecurityContext(workerSecurityContext(wp.Spec.DefaultSandboxClass())).
+		WithSecurityContext(securityContext).
 		WithEnv(workerContainerEnv(otel)...).
 		WithVolumeMounts(
 			corev1ac.VolumeMount().
@@ -260,6 +264,13 @@ func buildDeploymentApplyConfig(wp *atev1.WorkerPool, otel workerOTelSettings, s
 	applyWorkerPoolPodTemplate(podSpecAC, containerAC, wp.Spec.Template)
 	applySandboxClassToleration(podSpecAC, wp.Spec.DefaultSandboxClass())
 	maybeApplyMicroVMPodShape(podSpecAC, containerAC, wp.Spec.DefaultSandboxClass())
+	if wp.Spec.DefaultSandboxClass() == atev1.SandboxClassLXC && wp.Labels[workerLXCNestingLabel] == "enabled" {
+		// Docker's default container capabilities require FSETID, KILL and
+		// AUDIT_WRITE in the parent's bounding set. Kubelet also needs SYSLOG
+		// and the device-cgroup grant to read the real kernel log.
+		securityContext.Capabilities.WithAdd("FSETID", "KILL", "AUDIT_WRITE", "SYSLOG")
+		addDeviceResourceLimits(containerAC, deviceplugin.ResourceKmsg)
+	}
 	podSpecAC.WithContainers(containerAC)
 	podSpecAC.WithTerminationGracePeriodSeconds(workerTerminationGracePeriodSeconds)
 

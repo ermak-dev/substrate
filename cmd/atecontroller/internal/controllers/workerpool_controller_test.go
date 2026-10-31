@@ -863,6 +863,50 @@ func TestSyncStatus_ReadyReplicas(t *testing.T) {
 	})
 }
 
+// FEATURE: Invalid LXC nesting opt-ins fail before changing a Deployment.
+// SPEC: Only the value enabled on an LXC pool is accepted.
+// IMPLEMENTATION: Reconciliation validates the label before reading or writing dependents.
+// RESULT: IMPLEMENTED; invalid opt-ins leave the Deployment unchanged.
+// STATUS: DONE
+func TestLXCNestingInvalidOptIn(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		class     atev1.SandboxClass
+		value     string
+		wantError string
+	}{
+		{"empty value", atev1.SandboxClassLXC, "", `WorkerPool label ate.dev/lxc-nesting must be "enabled", got ""`},
+		{"unknown value", atev1.SandboxClassLXC, "true", `WorkerPool label ate.dev/lxc-nesting must be "enabled", got "true"`},
+		{"disabled value", atev1.SandboxClassLXC, "disabled", `WorkerPool label ate.dev/lxc-nesting must be "enabled", got "disabled"`},
+		{"default class", "", "enabled", `WorkerPool label ate.dev/lxc-nesting requires sandbox class "lxc"`},
+		{"gvisor", atev1.SandboxClassGvisor, "enabled", `WorkerPool label ate.dev/lxc-nesting requires sandbox class "lxc"`},
+		{"microvm", atev1.SandboxClassMicroVM, "enabled", `WorkerPool label ate.dev/lxc-nesting requires sandbox class "lxc"`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			utilruntime.Must(atev1.AddToScheme(scheme))
+			utilruntime.Must(appsv1.AddToScheme(scheme))
+			wp := makeWorkerPool("invalid-nesting", "default", 1, "worker:v1")
+			wp.Labels = map[string]string{"ate.dev/lxc-nesting": tt.value}
+			wp.Spec.SandboxClasses = []atev1.WorkerPoolSandboxClass{{Name: tt.class}}
+			dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: wp.Name, Namespace: wp.Namespace}}
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(wp, dep).Build()
+			r := &WorkerPoolReconciler{Client: c}
+			err := r.reconcileWorkerPool(t.Context(), wp)
+			if err == nil || err.Error() != tt.wantError {
+				t.Errorf("reconcile error = %v, want %s", err, tt.wantError)
+			}
+			var got appsv1.Deployment
+			if err := c.Get(t.Context(), client.ObjectKeyFromObject(dep), &got); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(dep.Spec, got.Spec) {
+				t.Errorf("invalid opt-in changed Deployment: got %+v, want %+v", got.Spec, dep.Spec)
+			}
+		})
+	}
+}
+
 // TestWorkerPoolMetrics verifies that the registered callback observes
 // spec.replicas and status.readyReplicas per WorkerPool, labeled with the pool
 // namespace and name. A fake client keeps this off the envtest reconciler,

@@ -160,6 +160,14 @@ func (r *WorkerPoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 // The config was already being deleted then, so the read in step 3 sees the
 // deletion and the class does not switch.
 func (r *WorkerPoolReconciler) reconcileWorkerPool(ctx context.Context, wp *atev1.WorkerPool) error {
+	if value, present := wp.Labels[workerLXCNestingLabel]; present {
+		if value != "enabled" {
+			return fmt.Errorf("WorkerPool label %s must be %q, got %q", workerLXCNestingLabel, "enabled", value)
+		}
+		if wp.Spec.DefaultSandboxClass() != atev1.SandboxClassLXC {
+			return fmt.Errorf("WorkerPool label %s requires sandbox class %q", workerLXCNestingLabel, atev1.SandboxClassLXC)
+		}
+	}
 	log := log.FromContext(ctx)
 	log.Info("Reconciling worker pool")
 

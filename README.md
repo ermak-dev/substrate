@@ -15,6 +15,26 @@
 
 </div>
 
+## Brood fork
+
+This branch is a fork of [Agent Substrate](https://github.com/agent-substrate/substrate)
+for [Brood](https://github.com/ermak-dev/brood). It adds:
+
+* An experimental `lxc` sandbox class and worker for trusted workloads. Each
+  worker runs one actor, with an LXC container for each OCI application container.
+* An opt-in LXC nesting profile for trusted pools running systemd, Docker, or
+  kind, with additional capabilities and a higher actor PID limit.
+* Actor lifecycle cleanup, crash reporting, and cgroup-based usage samples for
+  LXC, plus an isolated [API end-to-end test stand](hack/lxc-e2e/README.md).
+* A checkpoint precondition that rejects suspend before modifying an actor when
+  its sandbox cannot checkpoint, and GitLab CI and test fixture improvements.
+
+LXC shares the host kernel and has weaker isolation than gVisor or microVMs. It
+is not suitable for hostile multi-tenant workloads. LXC checkpoint and restore
+are not implemented; the snapshot and resume claims below do not apply to LXC.
+The worker image is built and deployed separately from the standard installer.
+See the [LXC worker guide](cmd/ateworker-lxc/README.md) for setup and limitations.
+
 ## What is Agent Substrate?
 
 Agent Substrate is a security-hardened, zero-trust runtime for sandboxed agents, engineered to safely run millions of agents and tools with 10x higher density than standard containers. Purpose-built for the era of autonomous agents, Substrate delivers fast resume operations in less than 400ms, with more than 1500 activations per second. Agents get isolated compute, identity, networking, and storage. Sensitive credentials are kept out of reach from untrusted code. It supports multiple sandbox technologies, including microVMs and gVisor, while enabling a consistent lifecycle and management of all sandboxes.
@@ -25,9 +45,9 @@ Substrate is a low-opinion runtime, not an agent SDK. The workloads it runs do n
 
 ## Security Model
 
-Substrate treats every actor as untrusted and mutually hostile, so tenants can share physical nodes without sharing a security boundary. Every control operates within the cold-start and resume budget. See the [Security Guide](docs/security.md) for the full list of security principles and threat model.
+Upstream Substrate treats every actor as untrusted and mutually hostile, so tenants can share physical nodes without sharing a security boundary. The experimental LXC class in this fork is an exception intended only for trusted workloads. See the [Security Guide](docs/security.md) for the upstream security principles and threat model.
 
-* **Always sandboxed, VM-grade boundaries:** Every actor runs inside a dedicated [gVisor](https://gvisor.dev/) (`runsc`) or [Cloud Hypervisor](https://www.cloudhypervisor.org/) microVM sandbox with segregated compute, network, and storage. Plain Linux containers are not supported.
+* **Sandbox boundaries:** Upstream actors run inside a dedicated [gVisor](https://gvisor.dev/) (`runsc`) or [Cloud Hypervisor](https://www.cloudhypervisor.org/) microVM sandbox with segregated compute, network, and storage. This fork also supports the experimental LXC class described above.
 * **Per-agent cryptographic identity:** Every active actor receives a short-lived [SPIFFE](https://spiffe.io/) X.509 certificate by default, and the egress gateway can mint per-actor JWTs on demand when an egress policy calls for one. Both carry the actor identity and atespace (the Substrate namespace grouping), and are designed to federate with external identity systems.
 * **Zero credentials in the sandbox:** Actors never hold actor identity JWTs/certs, API keys, or cloud tokens. The built-in egress gateway ([`atenet-egress`](docs/egress-credential-injection.md)) injects credentials into approved outbound requests outside the sandbox, so a prompt-injected or compromised agent has nothing to exfiltrate.
 * **Default-deny networking:** Actors start with a private network stack, no inbound path except through the ingress router (`atenet-router`), no lateral actor-to-actor or control-plane access, and outbound traffic [restricted by the egress gateway](docs/egress-traffic.md).

@@ -29,11 +29,15 @@ for [Brood](https://github.com/ermak-dev/brood). It adds:
 * A checkpoint precondition that rejects suspend before modifying an actor when
   its sandbox cannot checkpoint, and GitLab CI and test fixture improvements.
 
-LXC shares the host kernel and has weaker isolation than gVisor or microVMs. It
-is not suitable for hostile multi-tenant workloads. LXC checkpoint and restore
-are not implemented; the snapshot and resume claims below do not apply to LXC.
-The worker image is built and deployed separately from the standard installer.
-See the [LXC worker guide](cmd/ateworker-lxc/README.md) for setup and limitations.
+LXC uses the host kernel. This worker uses broad capabilities, an unconfined
+AppArmor profile, and an unconfined seccomp profile; it does not apply the OCI
+capability allowlist. Its isolation has not been established as equivalent to
+that of gVisor or microVMs, so use it only for trusted workloads. See the
+[LXC worker guide](cmd/ateworker-lxc/README.md) for configuration and limitations.
+
+LXC checkpoint and restore are not implemented; the snapshot and resume claims
+below do not apply to LXC. The worker image is built and deployed separately
+from the standard installer.
 
 ## What is Agent Substrate?
 
